@@ -88,6 +88,22 @@ alter table grants_table add column if not exists lender_id uuid references lend
 -- past approval, into the long-lived grant a lender endpoint actually reads.
 alter table grants_table add column if not exists will_share jsonb not null default '[]'::jsonb;
 
+-- Lender request-status tracking (2026-09-13). pending_consents rows used
+-- to be hard-deleted the moment a borrower responded (approve -> moved into
+-- grants_table, deny -> gone with no trace) — fine for the borrower's own
+-- "waiting for your response" list, but it meant a lender could never see
+-- what happened to a request it sent. Rows are now kept and marked
+-- resolved instead of deleted, which doubles as a genuine (if minimal)
+-- audit trail of what was asked and how it was answered.
+alter table pending_consents add column if not exists status text not null default 'pending'
+  check (status in ('pending', 'approved', 'denied'));
+-- Denormalized like profiles.email, for the same reason: a lender's RLS
+-- (lender_read_own_pending, below) covers this row before any grant exists,
+-- but there's no policy letting a lender join to profiles/auth.users pre-
+-- approval. Populated by create_lender_consent_request; null for demo/
+-- simulated rows (lender_id null), which never appear in a lender's own view.
+alter table pending_consents add column if not exists borrower_email text;
+
 create index if not exists pending_consents_lender_id_idx on pending_consents (lender_id);
 create index if not exists grants_table_lender_id_idx on grants_table (lender_id);
 
@@ -236,6 +252,7 @@ declare
   v_lender_id uuid := auth.uid();
   v_org_name text;
   v_borrower_id uuid;
+  v_borrower_email text;
   v_row pending_consents;
 begin
   select org_name into v_org_name from lenders where id = v_lender_id;
@@ -243,7 +260,7 @@ begin
     raise exception 'not a registered lender' using errcode = '42501';
   end if;
 
-  select p.id into v_borrower_id
+  select p.id, u.email into v_borrower_id, v_borrower_email
   from auth.users u join profiles p on p.id = u.id
   where lower(u.email) = lower(p_borrower_email);
 
@@ -251,9 +268,9 @@ begin
     raise exception 'no PesaScore borrower account found for that email' using errcode = 'P0002';
   end if;
 
-  insert into pending_consents (user_id, lender_id, lender_name, grant_duration_days, will_share, wont_share)
+  insert into pending_consents (user_id, lender_id, lender_name, borrower_email, grant_duration_days, will_share, wont_share)
   values (
-    v_borrower_id, v_lender_id, v_org_name, p_grant_duration_days,
+    v_borrower_id, v_lender_id, v_org_name, v_borrower_email, p_grant_duration_days,
     '["repayment_history","savings_activity","fuliza_reliance","account_age"]'::jsonb,
     '["Full transaction amounts","Contact list","Balances on other accounts"]'::jsonb
   )

@@ -610,6 +610,41 @@ registered accounts, not anonymous users, and the endpoint is rate-limited
 (20/minute), but a genuinely privacy-maximal design would return an
 identical response either way.
 
+### Lender request-status view (same day, follow-up)
+
+The lender frontend initially had no way to send a consent request either
+(fixed above) or, once it could, no way to see what happened to one it
+sent — `pending_consents` rows were hard-deleted on response (approve
+moved the data into `grants_table`, deny left no trace at all). Fixed by
+keeping the row and marking it resolved instead:
+
+- `pending_consents` gained `status text not null default 'pending' check
+  (status in ('pending','approved','denied'))` and a denormalized
+  `borrower_email` (same reason as `profiles.email` — a lender's RLS
+  covers this row via `lender_id`, but there's no policy letting it join to
+  `profiles`/`auth.users` *before* a grant exists, i.e. while still
+  pending).
+- `create_lender_consent_request` now captures `borrower_email` from the
+  same lookup it already did.
+- `routers/consent.py`'s `respond_to_consent` updates `status` instead of
+  deleting; `list_pending_consent`/`get_pending_consent` (the borrower's
+  own "waiting for your response" view) and `simulate_incoming_request`'s
+  duplicate-lender check all now filter to `status = 'pending'` — zero
+  behavior change from the borrower's side, since a resolved row simply
+  stops matching that filter instead of ceasing to exist.
+- New `GET /v1/lender/consent-requests` — reuses the `lender_read_own_pending`
+  RLS policy that already existed (no new policy needed), returns every
+  request a lender has sent with its current status. This is a real, if
+  minimal, audit trail now, not just a live queue.
+
+**Verified live**: a fresh request shows `status: "pending"` with a real
+masked `borrower_email` (confirming the capture fix — a stale pre-fix row
+correctly still shows `"unknown"`, since it predates this column existing);
+denying one flips it to `"denied"` and it stays visible to the lender
+(disappearing only from the borrower's own pending list); approving one
+flips it to `"approved"` and the same grant appears in
+`GET /v1/lender/applicants` as before.
+
 ## Deployment (Render)
 
 This has run locally only until now. `render.yaml` is a Blueprint — connect

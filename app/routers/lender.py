@@ -102,6 +102,31 @@ async def create_consent_request(request: Request, body: ConsentRequestBody, len
     return {"ok": True, "requestId": str(row["id"])}
 
 
+@router.get("/v1/lender/consent-requests")
+async def list_consent_requests(lender: AuthedLender = Depends(get_current_lender)):
+    """Every request this lender has ever sent, whatever its current status
+    — the RLS policy this relies on (lender_read_own_pending) already
+    existed before this endpoint did. Rows are no longer deleted on
+    response (see routers/consent.py), so this is a real, if minimal,
+    audit trail, not just a live queue."""
+    async with db_conn(lender.id) as conn:
+        rows = await (await conn.execute(
+            "select id, borrower_email, status, grant_duration_days, created_at from pending_consents"
+            " where lender_id = %s order by created_at desc",
+            (lender.id,),
+        )).fetchall()
+    return [
+        {
+            "id": str(r["id"]),
+            "maskedBorrowerEmail": _mask_email(r["borrower_email"]),
+            "status": r["status"],
+            "grantDurationDays": r["grant_duration_days"],
+            "createdAt": r["created_at"].date().isoformat(),
+        }
+        for r in rows
+    ]
+
+
 @router.get("/v1/lender/applicants")
 async def list_applicants(lender: AuthedLender = Depends(get_current_lender)):
     async with db_conn(lender.id) as conn:

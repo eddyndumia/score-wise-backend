@@ -36,7 +36,8 @@ def _grant_row_to_dict(row: dict) -> dict:
 async def list_pending_consent(user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
         rows = await (await conn.execute(
-            "select id, lender_name, grant_duration_days, will_share, wont_share from pending_consents where user_id = %s order by created_at",
+            "select id, lender_name, grant_duration_days, will_share, wont_share from pending_consents"
+            " where user_id = %s and status = 'pending' order by created_at",
             (user.id,),
         )).fetchall()
     return [consent_to_json(_consent_row_to_dict(r)) for r in rows]
@@ -46,7 +47,8 @@ async def list_pending_consent(user: AuthedUser = Depends(get_current_user)):
 async def get_pending_consent(request_id: str, user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
         row = await (await conn.execute(
-            "select id, lender_name, grant_duration_days, will_share, wont_share from pending_consents where user_id = %s and id = %s",
+            "select id, lender_name, grant_duration_days, will_share, wont_share from pending_consents"
+            " where user_id = %s and id = %s and status = 'pending'",
             (user.id, request_id),
         )).fetchone()
     if row is None:
@@ -61,16 +63,24 @@ class ConsentResponse(BaseModel):
 @router.post("/v1/consent/{request_id}/respond")
 async def respond_to_consent(request_id: str, body: ConsentResponse, user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
+        # Marked resolved (approved/denied) instead of deleted, so a lender
+        # can later see what happened to a request it sent — see
+        # routers/lender.py's GET /v1/lender/consent-requests. 404 covers
+        # both "never existed" and "already resolved" the same way a delete
+        # used to (no oracle either way).
         row = await (await conn.execute(
-            "delete from pending_consents where user_id = %s and id = %s"
-            " returning lender_name, lender_id, grant_duration_days, will_share",
+            "select lender_name, lender_id, grant_duration_days, will_share from pending_consents"
+            " where user_id = %s and id = %s and status = 'pending'",
             (user.id, request_id),
         )).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Request not found")
 
         if not body.approve:
+            await conn.execute("update pending_consents set status = 'denied' where id = %s", (request_id,))
             return {"ok": True, "grant": None}
+
+        await conn.execute("update pending_consents set status = 'approved' where id = %s", (request_id,))
 
         # lender_id/will_share carry through so real per-grant enforcement
         # (routers/lender.py) survives past approval — a demo/simulated
@@ -91,7 +101,12 @@ async def simulate_incoming_request(user: AuthedUser = Depends(get_current_user)
     wont_share = ["Full transaction amounts", "Contact list", "Balances on other accounts"]
 
     async with db_conn(user.id) as conn:
-        pending = await (await conn.execute("select lender_name from pending_consents where user_id = %s", (user.id,))).fetchall()
+        # Only status='pending' counts as "already asked" — a resolved
+        # (approved/denied) row from an earlier simulate no longer blocks
+        # that same demo lender name from being picked again.
+        pending = await (await conn.execute(
+            "select lender_name from pending_consents where user_id = %s and status = 'pending'", (user.id,)
+        )).fetchall()
         granted = await (await conn.execute("select lender_name from grants_table where user_id = %s", (user.id,))).fetchall()
         pending_names = {r["lender_name"] for r in pending}
         granted_names = {r["lender_name"] for r in granted}
