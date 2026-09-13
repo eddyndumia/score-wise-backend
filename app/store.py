@@ -6,6 +6,7 @@ sessions) used to live here as a bare in-memory dict; it's now a real table
 didn't survive a Render restart/idle-spindown.
 """
 
+from .consent_categories import STANDARD_WILL_SHARE
 from .scoring import FulizaMetrics, PeriodMetrics, RepaymentMetrics, SavingsMetrics
 
 HOUR_MS = 60 * 60 * 1000
@@ -38,11 +39,14 @@ DEFAULT_CASH_FLOW = [
 ]
 
 # Seeded so a brand-new account isn't empty on first load — same product
-# decision the old Store made.
+# decision the old Store made. will_share is stored as category keys now
+# (see app/consent_categories.py) — app/serializers.py maps them to display
+# labels before they ever reach the frontend, so PendingConsentRequest's
+# willShare field is unchanged from the borrower's point of view.
 DEFAULT_PENDING_CONSENT = {
     "lender_name": "Amani SACCO",
     "grant_duration_days": 30,
-    "will_share": ["Repayment history summary", "Savings activity summary", "Account age"],
+    "will_share": STANDARD_WILL_SHARE,
     "wont_share": ["Full transaction amounts", "Contact list", "Balances on other accounts"],
 }
 DEFAULT_GRANT_LENDER_NAME = "Amani SACCO"

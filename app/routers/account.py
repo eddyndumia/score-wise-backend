@@ -84,6 +84,6 @@ async def delete_account(response: Response, user: AuthedUser = Depends(get_curr
         await conn.execute(
             "update profiles set account_name = null, profile_name = null where id = %s", (user.id,)
         )
-        await seed_new_account(conn, user.id)
+        await seed_new_account(conn, user.id, user.email)
     clear_auth_cookies(response)
     return {"ok": True}

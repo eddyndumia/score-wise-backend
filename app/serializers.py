@@ -1,3 +1,4 @@
+from .consent_categories import category_labels
 from .scoring import ScoreResult
 
 
@@ -29,11 +30,14 @@ def grant_to_json(grant: dict) -> dict:
 
 
 def consent_to_json(request: dict) -> dict:
+    # will_share is stored as category keys (app/consent_categories.py); the
+    # consumer app has always rendered human-readable display strings here,
+    # so this mapping keeps that DTO unchanged.
     return {
         "id": request["id"],
         "lenderName": request["lender_name"],
         "grantDurationDays": request["grant_duration_days"],
-        "willShare": request["will_share"],
+        "willShare": category_labels(request["will_share"]),
         "wontShare": request["wont_share"],
     }
 

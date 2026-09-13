@@ -42,6 +42,13 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").lower()
 COOKIE_ACCESS = "sw_access_token"
 COOKIE_REFRESH = "sw_refresh_token"
+# Lenders are a second, distinct authenticated principal (see
+# app/lender_auth.py) with their own real Supabase Auth account — a
+# separate cookie pair means a borrower session and a lender session can
+# coexist in the same browser without one clobbering the other, which a
+# developer testing both apps at once will do routinely.
+COOKIE_LENDER_ACCESS = "sw_lender_access_token"
+COOKIE_LENDER_REFRESH = "sw_lender_refresh_token"
 ACCESS_MAX_AGE = 60 * 60  # Supabase access tokens default to 1h
 REFRESH_MAX_AGE = 60 * 60 * 24 * 30  # refresh tokens are long-lived
 
@@ -62,14 +69,23 @@ def _cookie_kwargs(max_age: int) -> dict:
     }
 
 
-def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
-    response.set_cookie(COOKIE_ACCESS, access_token, **_cookie_kwargs(ACCESS_MAX_AGE))
-    response.set_cookie(COOKIE_REFRESH, refresh_token, **_cookie_kwargs(REFRESH_MAX_AGE))
+def set_auth_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: str,
+    *,
+    access_cookie: str = COOKIE_ACCESS,
+    refresh_cookie: str = COOKIE_REFRESH,
+) -> None:
+    response.set_cookie(access_cookie, access_token, **_cookie_kwargs(ACCESS_MAX_AGE))
+    response.set_cookie(refresh_cookie, refresh_token, **_cookie_kwargs(REFRESH_MAX_AGE))
 
 
-def clear_auth_cookies(response: Response) -> None:
-    response.delete_cookie(COOKIE_ACCESS, path="/")
-    response.delete_cookie(COOKIE_REFRESH, path="/")
+def clear_auth_cookies(
+    response: Response, *, access_cookie: str = COOKIE_ACCESS, refresh_cookie: str = COOKIE_REFRESH
+) -> None:
+    response.delete_cookie(access_cookie, path="/")
+    response.delete_cookie(refresh_cookie, path="/")
 
 
 def verify_access_token(token: str) -> AuthedUser:
@@ -94,9 +110,33 @@ async def _refresh(refresh_token: str) -> dict:
     return resp.json()
 
 
-async def get_current_user(request: Request, response: Response) -> AuthedUser:
-    access_token = request.cookies.get(COOKIE_ACCESS)
-    refresh_token = request.cookies.get(COOKIE_REFRESH)
+async def password_grant(email: str, password: str) -> dict:
+    """Supabase's password-grant login call — shared by the borrower and
+    lender login endpoints (routers/auth.py, routers/lender_auth.py) so the
+    same httpx call isn't duplicated and can't drift between the two."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/token",
+            params={"grant_type": "password"},
+            json={"email": email, "password": password},
+            headers={"apikey": SUPABASE_ANON_KEY},
+        )
+    if resp.status_code >= 400:
+        # Generic message regardless of which part was wrong — avoids
+        # confirming to an attacker whether an email is registered.
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return resp.json()
+
+
+async def get_current_user(
+    request: Request,
+    response: Response,
+    *,
+    access_cookie: str = COOKIE_ACCESS,
+    refresh_cookie: str = COOKIE_REFRESH,
+) -> AuthedUser:
+    access_token = request.cookies.get(access_cookie)
+    refresh_token = request.cookies.get(refresh_cookie)
 
     if access_token:
         try:
@@ -110,7 +150,9 @@ async def get_current_user(request: Request, response: Response) -> AuthedUser:
         raise HTTPException(status_code=401, detail="Not signed in")
 
     session = await _refresh(refresh_token)
-    set_auth_cookies(response, session["access_token"], session["refresh_token"])
+    set_auth_cookies(
+        response, session["access_token"], session["refresh_token"], access_cookie=access_cookie, refresh_cookie=refresh_cookie
+    )
     return verify_access_token(session["access_token"])
 
 

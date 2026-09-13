@@ -2,7 +2,15 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from ..auth import SUPABASE_ANON_KEY, SUPABASE_URL, AuthedUser, clear_auth_cookies, get_current_user_optional, set_auth_cookies
+from ..auth import (
+    SUPABASE_ANON_KEY,
+    SUPABASE_URL,
+    AuthedUser,
+    clear_auth_cookies,
+    get_current_user_optional,
+    password_grant,
+    set_auth_cookies,
+)
 from ..db import db_conn
 from ..seed import seed_new_account
 
@@ -51,7 +59,7 @@ async def signup(body: Credentials, response: Response):
 
     user_id = data["user"]["id"]
     async with db_conn(user_id) as conn:
-        await seed_new_account(conn, user_id)
+        await seed_new_account(conn, user_id, data["user"].get("email"))
 
     set_auth_cookies(response, data["access_token"], data["refresh_token"])
     return {"email": data["user"].get("email")}
@@ -59,20 +67,7 @@ async def signup(body: Credentials, response: Response):
 
 @router.post("/v1/auth/login")
 async def login(body: Credentials, response: Response):
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{SUPABASE_URL}/auth/v1/token",
-            params={"grant_type": "password"},
-            json={"email": body.email, "password": body.password},
-            headers={"apikey": SUPABASE_ANON_KEY},
-        )
-
-    if resp.status_code >= 400:
-        # Generic message regardless of which part was wrong — avoids
-        # confirming to an attacker whether an email is registered.
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    data = resp.json()
+    data = await password_grant(body.email, body.password)
     set_auth_cookies(response, data["access_token"], data["refresh_token"])
     return {"email": data["user"].get("email")}
 

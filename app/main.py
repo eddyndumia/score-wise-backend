@@ -8,11 +8,15 @@ from slowapi.errors import RateLimitExceeded
 
 from .db import close_pool, open_pool
 from .rate_limit import limiter
-from .routers import account, auth, cash_flow, consent, notifications, profile, requests, savings_goal, score, statements
+from .routers import account, auth, cash_flow, consent, lender, lender_auth, notifications, profile, requests, savings_goal, score, statements
 
-# Comma-separated in production (e.g. the deployed Netlify URL) — defaults to
-# just the consumer app's local dev server so nothing changes for local dev.
-ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+# Comma-separated in production (e.g. the deployed Netlify URLs) — defaults
+# to both apps' local dev servers so nothing changes for local dev. The
+# lender app's Vite dev server is pinned to 5174 (vite.config.ts) so this
+# default stays accurate instead of racing Vite's auto-increment behavior.
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174").split(",") if o.strip()
+]
 
 
 @asynccontextmanager
@@ -32,10 +36,11 @@ app = FastAPI(title="PesaScore API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Consumer app dev server. Add the lender app's origin here too once it starts
-# calling this backend. Never widen this to allow_origins=["*"] — this API
-# carries financial data and now real session cookies (allow_credentials
-# requires an explicit origin list, not "*", per the CORS spec anyway).
+# Consumer + lender apps' dev servers (see ALLOWED_ORIGINS above) — add the
+# lender app's real deployed Netlify origin once it's actually deployed.
+# Never widen this to allow_origins=["*"] — this API carries financial data
+# and real session cookies for two separate principal kinds now
+# (allow_credentials requires an explicit origin list, not "*", anyway).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -69,6 +74,8 @@ app.include_router(cash_flow.router)
 app.include_router(savings_goal.router)
 app.include_router(account.router)
 app.include_router(notifications.router)
+app.include_router(lender_auth.router)
+app.include_router(lender.router)
 
 
 @app.get("/health")

@@ -21,6 +21,13 @@ create table if not exists profiles (
   profile_name text,
   created_at timestamptz not null default now()
 );
+-- Denormalized copy of the borrower's auth.users email — added so a lender's
+-- RLS-scoped query (routers/lender.py) can build a masked identifier without
+-- touching auth.users, which the `authenticated` role has no grant on at all
+-- (only the SECURITY DEFINER function below can read it). Populated at
+-- signup (app/seed.py); pre-existing rows created before this pass are left
+-- null (masked as "unknown") rather than backfilled.
+alter table profiles add column if not exists email text;
 
 create table if not exists period_metrics (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -60,6 +67,29 @@ create table if not exists grants_table (
   created_at timestamptz not null default now()
 );
 create index if not exists grants_table_user_id_idx on grants_table (user_id);
+
+-- Real lender identity (2026-09-13 pass — see PESASCORE_BACKLOG.md's old
+-- "Lender app real backend integration" entry). Mirrors `profiles`'s shape:
+-- one row per Supabase Auth user, this time an org account instead of a
+-- borrower. `lender_name` on pending_consents/grants_table stays a display
+-- snapshot for the consumer app's existing lenderName-only DTOs; lender_id
+-- is the real, RLS-checkable link. Both are nullable additions so every
+-- existing seeded/simulated row (lender_id null) is untouched.
+create table if not exists lenders (
+  id uuid primary key references auth.users(id) on delete cascade,
+  org_name text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table pending_consents add column if not exists lender_id uuid references lenders(id) on delete set null;
+alter table grants_table add column if not exists lender_id uuid references lenders(id) on delete set null;
+-- Category-key array (see app/consent_categories.py) — lives on grants_table
+-- too (not just pending_consents) so real per-grant enforcement survives
+-- past approval, into the long-lived grant a lender endpoint actually reads.
+alter table grants_table add column if not exists will_share jsonb not null default '[]'::jsonb;
+
+create index if not exists pending_consents_lender_id_idx on pending_consents (lender_id);
+create index if not exists grants_table_lender_id_idx on grants_table (lender_id);
 
 -- created_at is epoch-milliseconds (bigint) for the same reason — it's
 -- serialized straight to the frontend as "createdAt".
@@ -104,6 +134,7 @@ alter table grants_table enable row level security;
 alter table savings_goals enable row level security;
 alter table notifications enable row level security;
 alter table pending_reviews enable row level security;
+alter table lenders enable row level security;
 
 drop policy if exists "owner_all" on profiles;
 create policy "owner_all" on profiles for all to authenticated
@@ -137,9 +168,108 @@ drop policy if exists "owner_all" on pending_reviews;
 create policy "owner_all" on pending_reviews for all to authenticated
   using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
+drop policy if exists "owner_all" on lenders;
+create policy "owner_all" on lenders for all to authenticated
+  using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
+
+-- Additive lender-facing SELECT policies below. Postgres combines multiple
+-- permissive policies on the same command with OR, so these only ever ADD
+-- visibility for a lender's own uid — they never weaken the owner_all
+-- policies above, which still fully govern the borrower's own access.
+
+-- A lender reading its own outgoing pending requests / grants (metadata
+-- only — no borrower profile/score data is exposed by these two).
+drop policy if exists "lender_read_own_pending" on pending_consents;
+create policy "lender_read_own_pending" on pending_consents for select to authenticated
+  using ((select auth.uid()) = lender_id);
+
+drop policy if exists "lender_read_own_grants" on grants_table;
+create policy "lender_read_own_grants" on grants_table for select to authenticated
+  using ((select auth.uid()) = lender_id);
+
+-- The policies that actually make a lender's dashboard real: a lender may
+-- read a borrower's profile/period_metrics only while an UNEXPIRED grant
+-- naming that exact lender exists. A revoke (existing DELETE endpoint) or
+-- simple expiry (nothing needs to actively run — the expires_at > now
+-- check just stops matching) both immediately cut off visibility.
+drop policy if exists "lender_read_granted_profiles" on profiles;
+create policy "lender_read_granted_profiles" on profiles for select to authenticated
+  using (exists (
+    select 1 from grants_table g
+    where g.user_id = profiles.id
+      and g.lender_id = (select auth.uid())
+      and g.expires_at > (extract(epoch from now()) * 1000)::bigint
+  ));
+
+drop policy if exists "lender_read_granted_period_metrics" on period_metrics;
+create policy "lender_read_granted_period_metrics" on period_metrics for select to authenticated
+  using (exists (
+    select 1 from grants_table g
+    where g.user_id = period_metrics.user_id
+      and g.lender_id = (select auth.uid())
+      and g.expires_at > (extract(epoch from now()) * 1000)::bigint
+  ));
+
 -- Not using PostgREST/the Data API in this design (the backend talks to
 -- Postgres directly via the session pooler), so Data API exposure settings
 -- don't apply — but the `authenticated` role still needs plain SQL grants
 -- since these tables weren't created through the dashboard table editor.
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on all tables in schema public to authenticated;
+
+-- A lender's consent request names a borrower `user_id` that is NOT the
+-- inserting principal — no `with check` column-equality clause can express
+-- "an authenticated lender may insert a row on behalf of any borrower it
+-- correctly identifies." This function does its own authorization check in
+-- the body instead of relying on RLS's with check, and is deliberately
+-- narrow: the sharing package is fixed and platform-defined (no per-field
+-- consent picker exists anywhere in this app — approval is a single
+-- Allow/Deny), so a lender can never author its own will_share/wont_share
+-- text or spoof a different display name than its own real org_name.
+create or replace function public.create_lender_consent_request(
+  p_borrower_email text,
+  p_grant_duration_days int
+) returns pending_consents
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_lender_id uuid := auth.uid();
+  v_org_name text;
+  v_borrower_id uuid;
+  v_row pending_consents;
+begin
+  select org_name into v_org_name from lenders where id = v_lender_id;
+  if v_org_name is null then
+    raise exception 'not a registered lender' using errcode = '42501';
+  end if;
+
+  select p.id into v_borrower_id
+  from auth.users u join profiles p on p.id = u.id
+  where lower(u.email) = lower(p_borrower_email);
+
+  if v_borrower_id is null then
+    raise exception 'no PesaScore borrower account found for that email' using errcode = 'P0002';
+  end if;
+
+  insert into pending_consents (user_id, lender_id, lender_name, grant_duration_days, will_share, wont_share)
+  values (
+    v_borrower_id, v_lender_id, v_org_name, p_grant_duration_days,
+    '["repayment_history","savings_activity","fuliza_reliance","account_age"]'::jsonb,
+    '["Full transaction amounts","Contact list","Balances on other accounts"]'::jsonb
+  )
+  returning * into v_row;
+
+  -- Also done here (not by the calling Python code under the lender's own
+  -- RLS-scoped connection) for the same reason as the insert above: this
+  -- notification's user_id is the BORROWER, and the lender's restricted role
+  -- can't satisfy notifications' owner_all `with check` for a row it doesn't
+  -- own. Same security-definer authorization boundary covers both inserts.
+  insert into notifications (user_id, kind, message, created_at)
+  values (v_borrower_id, 'consent_request', v_org_name || ' wants access to your credit profile.', (extract(epoch from now()) * 1000)::bigint);
+
+  return v_row;
+end;
+$$;
+
+revoke all on function public.create_lender_consent_request(text, int) from public;
+grant execute on function public.create_lender_consent_request(text, int) to authenticated;
