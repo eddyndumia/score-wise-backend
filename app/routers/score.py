@@ -30,7 +30,7 @@ async def get_score_report(user: AuthedUser = Depends(get_current_user)):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="scorewise-score-report.pdf"'},
+        headers={"Content-Disposition": 'attachment; filename="pesascore-score-report.pdf"'},
     )
 
 

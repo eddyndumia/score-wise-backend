@@ -66,7 +66,7 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
     return Response(
         content=body,
         media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="scorewise-data-export.json"'},
+        headers={"Content-Disposition": 'attachment; filename="pesascore-data-export.json"'},
     )
 
 

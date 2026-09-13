@@ -1,5 +1,5 @@
 """Generates the shareable score report PDF (feature: users can hand this to
-a lender/landlord who isn't integrated with ScoreWise directly). Pure-Python
+a lender/landlord who isn't integrated with PesaScore directly). Pure-Python
 via reportlab — no system dependency (unlike e.g. weasyprint, which needs a
 native GTK/Cairo install), which matters since this runs on a dev machine
 without those preinstalled and should deploy the same way anywhere later.
@@ -51,10 +51,10 @@ def generate_score_report_pdf(profile_name: str | None, result: ScoreResult) -> 
     disclaimer_style = ParagraphStyle("Disclaimer", parent=styles["Normal"], fontSize=7.5, textColor=_TEXT_SECONDARY, leading=11)
 
     generated_at = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
-    name = profile_name or "ScoreWise user"
+    name = profile_name or "PesaScore user"
 
     story = [
-        Paragraph("ScoreWise Score Report", title_style),
+        Paragraph("PesaScore Score Report", title_style),
         Paragraph(f"Prepared for {name} &middot; Generated {generated_at}", meta_style),
         Paragraph(str(result.score), score_style),
         Paragraph(
@@ -95,7 +95,7 @@ def generate_score_report_pdf(profile_name: str | None, result: ScoreResult) -> 
     story.append(Spacer(1, 24))
     story.append(
         Paragraph(
-            "This is an informational score estimate produced by ScoreWise from patterns in the user's own M-Pesa "
+            "This is an informational score estimate produced by PesaScore from patterns in the user's own M-Pesa "
             "transaction history. It is not an official or regulated credit score, is not issued by any credit "
             "reference bureau, and is not a guarantee that any lender will approve, reject, or offer any particular "
             "terms on a loan. Lenders make their own decisions using their own criteria. Nothing in this report is "

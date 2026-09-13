@@ -1,4 +1,4 @@
-"""Ported from scorewise-consumer/frontend/src/lib/scoring.ts — keep the two in sync.
+"""Ported from pesascore-consumer/frontend/src/lib/scoring.ts — keep the two in sync.
 The frontend's copy is now dead code once api/score.ts calls this backend, but is left
 in place as a reference / offline fallback.
 """

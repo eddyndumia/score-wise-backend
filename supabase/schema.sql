@@ -1,4 +1,4 @@
--- ScoreWise consumer app — core data schema, pass 1 (auth + core data).
+-- PesaScore consumer app — core data schema, pass 1 (auth + core data).
 -- Applied directly against DATABASE_URL by the backend session that wrote
 -- this file. Safe to re-run: every statement is idempotent.
 --

@@ -5,7 +5,7 @@
 # here) — see .env.example for what each one is and where to find it.
 services:
   - type: web
-    name: scorewise-backend
+    name: pesascore-backend
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt

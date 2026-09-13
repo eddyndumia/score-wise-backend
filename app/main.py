@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
-app = FastAPI(title="ScoreWise API", lifespan=lifespan)
+app = FastAPI(title="PesaScore API", lifespan=lifespan)
 
 # Per-IP in-memory limiter. Fine for a single-process dev/demo backend; a real
 # deployment behind Supabase should also rate-limit at the platform/gateway

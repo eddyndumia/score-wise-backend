@@ -1,7 +1,7 @@
-# ScoreWise — Backend
+# PesaScore — Backend
 
-FastAPI service shared by both ScoreWise apps (`../scorewise-consumer`,
-`../scorewise-lender`). Currently only the consumer app is wired up to it —
+FastAPI service shared by both PesaScore apps (`../pesascore-consumer`,
+`../pesascore-lender`). Currently only the consumer app is wired up to it —
 the lender app still runs on its own local mocks (see its CLAUDE.md).
 
 ## Status: real, working, real infra
@@ -23,7 +23,7 @@ asyncio to `ProactorEventLoop`, which psycopg's async pool (`app/db.py`) can't
 run under. `run.py` sets `WindowsSelectorEventLoopPolicy` before importing
 uvicorn; setting it inside the `app` package itself is too late, since
 `uvicorn.run()` creates its event loop *before* it imports the app string.
-Requires `scorewise-backend/.env` — see `.env.example` and "Supabase
+Requires `pesascore-backend/.env` — see `.env.example` and "Supabase
 migration, pass 1" below for what each variable is and where to find it.
 
 **Gotcha learned the hard way**: `--reload` watches this whole directory tree.
@@ -32,7 +32,7 @@ meant to throw away — triggers WatchFiles and restarts the worker, silently
 wiping all in-memory state back to `store.py`'s defaults. This looked exactly
 like a data bug (a registered profile name reverting to `null`) until traced
 to the reload log. Put debug/one-off scripts in the OS temp dir instead,
-reading this repo's files by absolute path — never inside `scorewise-backend/`
+reading this repo's files by absolute path — never inside `pesascore-backend/`
 itself while the server is running.
 
 CORS is currently locked to `http://localhost:5173` (the consumer app's dev
@@ -217,7 +217,7 @@ false-flags the legitimate owner).
 
 ## Scoring (`app/scoring.py`)
 
-Direct port of `scorewise-consumer/frontend/src/lib/scoring.ts` — same
+Direct port of `pesascore-consumer/frontend/src/lib/scoring.ts` — same
 formulas, same thresholds. Verified numerically identical (same mock inputs
 produce the same score, 746, on both sides). If one changes, change the
 other — there's no code sharing between the TS and Python copies.
@@ -247,7 +247,7 @@ written.
 - **Score report PDF** (`app/report.py`, `reportlab` — pure Python, no
   system dependency like weasyprint would need) — `GET /v1/score/report`.
   Downloadable, shareable with a lender/landlord who isn't integrated with
-  ScoreWise. Carries the same liability disclaimer as the Terms & Conditions
+  PesaScore. Carries the same liability disclaimer as the Terms & Conditions
   (not an official credit score, no lender guarantee). Verified by
   downloading and reading the actual PDF content, not just checking the
   HTTP status.
@@ -335,7 +335,7 @@ of what's still a gap and why it can't be closed without the real backend.
 - **No known-vulnerable dependencies** — `pip-audit` against
   `requirements.txt` came back clean as of this pass. Worth re-running
   whenever a dependency bumps.
-- **PIN brute-force lockout** (frontend, `scorewise-consumer/.../lib/
+- **PIN brute-force lockout** (frontend, `pesascore-consumer/.../lib/
   session.ts`): escalating lockout (15s / 60s / 5min) after 3/5/8 wrong PINs,
   same idea as iOS/Android's on-device passcode lockout. Verified live. This
   raises the cost of someone picking up an unlocked device and guessing, or
@@ -351,7 +351,7 @@ Two gaps that used to live here — no multi-tenancy, no real authentication —
 are resolved as of "Supabase migration, pass 1" below and moved up into "Real,
 in place now". What's left:
 
-- **PIN/session is 100% client-side** (see `scorewise-consumer` CLAUDE.md's
+- **PIN/session is 100% client-side** (see `pesascore-consumer` CLAUDE.md's
   security note) — this backend never sees or verifies a PIN. Hashing the
   PIN in `localStorage` was considered and deliberately **not** done: a
   4-digit PIN's keyspace (10,000 values) is trivially brute-forced offline
@@ -508,8 +508,10 @@ build/start commands automatically. Env vars marked `sync: false` in
 `render.yaml` (`SUPABASE_URL`, `SUPABASE_ANON_KEY`,
 `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `ALLOWED_ORIGINS`) must be set
 by hand in the dashboard after the service exists — copy the values from the
-local `.env`, and set `ALLOWED_ORIGINS=https://scorewisee.netlify.app` (the
-deployed frontend). `COOKIE_SECURE=true` and
+local `.env`, and set `ALLOWED_ORIGINS` to whatever the deployed frontend's
+actual Netlify URL ends up being after the PesaScore rename (was
+`https://scorewisee.netlify.app` under the old name — update this note once
+the new URL is confirmed). `COOKIE_SECURE=true` and
 `COOKIE_SAMESITE=none` are already set in the blueprint — required once the
 frontend and backend are on genuinely different domains (see `app/auth.py`'s
 comment on why `Lax` only worked for local dev's same-site-different-port
@@ -538,4 +540,4 @@ exists to work around.
   pass 1" above (moved to Postgres, 24h TTL).
 - **Zero automated test suite** (no pytest, no CI) — flagged during the
   2026-09-13 restructure pass as the most consequential gap in this file;
-  see `../SCOREWISE_BACKLOG.md`.
+  see `../PESASCORE_BACKLOG.md`.
