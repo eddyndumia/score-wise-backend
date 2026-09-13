@@ -187,8 +187,11 @@ non-loan payments (Glovo, subscriptions, etc.) — treat that exclusion as
 unverified for lenders who route through an aggregator instead of a direct
 bank paybill.
 
-Sessions live in `store.pending_reviews` (in-memory, no expiry) — restarting
-the server loses any upload waiting on review answers.
+Sessions live in a real `pending_reviews` Postgres table now (see
+`app/reviews_repo.py`), not an in-memory dict — a restart no longer loses an
+upload waiting on review answers. 24h TTL, lazily expired on read. See
+"Supabase migration, pass 1" below for why this moved; the RLS-scoped
+per-user_id design there carries over unchanged.
 
 ## Account name verification
 
@@ -419,11 +422,12 @@ automatically. `expires_at`/`created_at` on grants/notifications/savings
 goals are `bigint` epoch-milliseconds, not `timestamptz` — matches the
 existing JSON contract the frontend already expects (`ExpiryBadge`'s
 countdown math, notification timestamps), not a real datetime column.
-`pending_reviews` (in-flight ambiguous-statement-classification sessions)
-deliberately stays in-memory — genuinely short-lived and already a documented
-gap — but each session now carries a `user_id` so one account can't classify
-another's pending session by guessing/enumerating a session id, which the
-old single-tenant mock backend had no way to even express as a risk.
+`pending_reviews` (in-flight ambiguous-statement-classification sessions) is
+now a real table too (moved out of in-memory during the 2026-09-13
+restructure pass, see `app/reviews_repo.py`) — each session carries a
+`user_id` so one account can't classify another's pending session by
+guessing/enumerating a session id, which the old single-tenant mock backend
+had no way to even express as a risk, and it now also survives a restart.
 
 **Real gotchas hit and fixed, worth knowing before touching this again**:
 - **The direct `db.<ref>.supabase.co:5432` host is IPv6-only.** On a network
@@ -530,4 +534,8 @@ exists to work around.
 - Fuzzy name matching (see "Account name verification" above).
 - Ambiguous-group classification against a statement where a real loan is
   routed through a payment aggregator rather than a direct bank paybill.
-- Session expiry for `pending_reviews` — currently unbounded in-memory.
+- ~~Session expiry for `pending_reviews`~~ — done, see "Supabase migration,
+  pass 1" above (moved to Postgres, 24h TTL).
+- **Zero automated test suite** (no pytest, no CI) — flagged during the
+  2026-09-13 restructure pass as the most consequential gap in this file;
+  see `../SCOREWISE_BACKLOG.md`.
