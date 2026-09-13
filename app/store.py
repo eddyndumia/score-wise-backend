@@ -1,10 +1,9 @@
 """What's left of the old in-memory Store now that real data lives in
-Postgres (see app/db.py, app/seed.py): the default values a fresh account is
-seeded with, and pending_reviews, which stays in-memory on purpose — it's an
-in-flight, short-lived statement-classification session, not durable account
-data, and this is a documented, accepted gap (unbounded in-memory, reset on
-restart). Each session now carries a user_id so one account can't act on
-another's pending review by guessing/enumerating a session id.
+Postgres (see app/db.py, app/seed.py): just the default values a fresh
+account is seeded with. pending_reviews (ambiguous-statement classification
+sessions) used to live here as a bare in-memory dict; it's now a real table
+(see app/reviews_repo.py, supabase/schema.sql) since the in-memory version
+didn't survive a Render restart/idle-spindown.
 """
 
 from .scoring import FulizaMetrics, PeriodMetrics, RepaymentMetrics, SavingsMetrics
@@ -59,8 +58,3 @@ SIMULATED_LENDER_POOL = [
     "Tala",
     "Zenka",
 ]
-
-# sessionId -> {"user_id", "rows"} awaiting the user's yes/no answers before a
-# score can be computed. In-memory, unbounded, resets on restart — documented,
-# accepted gap (see backend CLAUDE.md "Not done yet").
-pending_reviews: dict[str, dict] = {}

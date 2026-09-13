@@ -79,6 +79,23 @@ create table if not exists notifications (
 );
 create index if not exists notifications_user_id_idx on notifications (user_id);
 
+-- Ambiguous-statement classification sessions awaiting the user's yes/no
+-- answers (see app/reviews_repo.py). Used to live as a bare in-process dict
+-- (app/store.py) — moved here because that dict didn't survive a Render
+-- restart/idle-spindown, silently losing a user's in-progress review.
+-- expires_at is timestamptz (unlike the epoch-ms columns above) since this
+-- is a server-internal TTL never read by the frontend, not a JSON contract
+-- field. Lazily expired on read (app/reviews_repo.py) rather than swept by a
+-- cron — cheap enough at this volume.
+create table if not exists pending_reviews (
+  session_id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  rows jsonb not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists pending_reviews_user_id_idx on pending_reviews (user_id);
+
 alter table profiles enable row level security;
 alter table period_metrics enable row level security;
 alter table cash_flow enable row level security;
@@ -86,6 +103,7 @@ alter table pending_consents enable row level security;
 alter table grants_table enable row level security;
 alter table savings_goals enable row level security;
 alter table notifications enable row level security;
+alter table pending_reviews enable row level security;
 
 drop policy if exists "owner_all" on profiles;
 create policy "owner_all" on profiles for all to authenticated
@@ -113,6 +131,10 @@ create policy "owner_all" on savings_goals for all to authenticated
 
 drop policy if exists "owner_all" on notifications;
 create policy "owner_all" on notifications for all to authenticated
+  using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+
+drop policy if exists "owner_all" on pending_reviews;
+create policy "owner_all" on pending_reviews for all to authenticated
   using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
 -- Not using PostgREST/the Data API in this design (the backend talks to

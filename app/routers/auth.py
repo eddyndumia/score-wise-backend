@@ -1,17 +1,12 @@
-import os
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from ..auth import AuthedUser, clear_auth_cookies, get_current_user_optional, set_auth_cookies
+from ..auth import SUPABASE_ANON_KEY, SUPABASE_URL, AuthedUser, clear_auth_cookies, get_current_user_optional, set_auth_cookies
 from ..db import db_conn
 from ..seed import seed_new_account
 
 router = APIRouter()
-
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
 
 
 class Credentials(BaseModel):

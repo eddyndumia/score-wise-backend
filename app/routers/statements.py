@@ -20,9 +20,9 @@ from ..pdf_parser import (
     split_and_compute,
 )
 from ..rate_limit import limiter
+from ..reviews_repo import delete_pending_review, load_pending_review, save_pending_review
 from ..scoring import compute_score
 from ..serializers import score_result_to_json
-from ..store import pending_reviews
 
 router = APIRouter()
 
@@ -108,7 +108,7 @@ async def upload_statement(
 
             if groups:
                 session_id = uuid.uuid4().hex
-                pending_reviews[session_id] = {"user_id": user.id, "rows": tagged_rows}
+                await save_pending_review(conn, user.id, session_id, tagged_rows)
                 return {
                     "status": "needs_review",
                     "sessionId": session_id,
@@ -145,22 +145,22 @@ class ClassifyRequest(BaseModel):
 async def classify_statement(
     request: Request, session_id: str, body: ClassifyRequest, user: AuthedUser = Depends(get_current_user)
 ):
-    pending = pending_reviews.get(session_id)
-    # 404 both when the session never existed/expired AND when it belongs to
-    # a different account — an account can't tell which by the response,
-    # which is the point (no session-ownership oracle).
-    if pending is None or pending["user_id"] != user.id:
-        raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "This review session has expired or doesn't exist."})
-    del pending_reviews[session_id]
-
-    overrides = {a.groupId: a.isRepayment for a in body.answers}
-
-    try:
-        previous, current = split_and_compute(pending["rows"], overrides)
-    except StatementParseError as e:
-        raise HTTPException(status_code=422, detail={"code": "parse_error", "message": str(e)}) from e
-
     async with db_conn(user.id) as conn:
+        # 404 both when the session never existed/expired AND when it belongs
+        # to a different account — an account can't tell which by the
+        # response, which is the point (no session-ownership oracle).
+        rows = await load_pending_review(conn, user.id, session_id)
+        if rows is None:
+            raise HTTPException(status_code=404, detail={"code": "session_not_found", "message": "This review session has expired or doesn't exist."})
+        await delete_pending_review(conn, session_id)
+
+        overrides = {a.groupId: a.isRepayment for a in body.answers}
+
+        try:
+            previous, current = split_and_compute(rows, overrides)
+        except StatementParseError as e:
+            raise HTTPException(status_code=422, detail={"code": "parse_error", "message": str(e)}) from e
+
         await save_period_metrics(conn, user.id, previous, current)
         result = compute_score(current, previous)
         await _notify_score_change(conn, user.id, result.delta, result.score)
