@@ -500,6 +500,116 @@ account's `auth.uid()`, with no `WHERE` clause at all, returns only that
 account's rows — confirming RLS itself is the enforcement boundary, not
 application code that happens to filter correctly today.
 
+## Lender identity, real consent, and consent enforcement (2026-09-13)
+
+Replaces the "lender" concept — previously just a free-text display string
+(`grants_table.lender_name`, `SIMULATED_LENDER_POOL`) with no login and no
+way for a real lender to see anything — with a genuine second authenticated
+principal, sharing the same JWT-verification/cookie/RLS mechanism the
+borrower side already used (that mechanism turned out to already be
+generic enough for this: `verify_access_token` only ever inspects a JWT's
+`sub`/`email`/`aud`, and `db_conn`'s RLS role-drop only cares that the uid
+is a real `auth.users.id`, not which "kind" of principal it is).
+
+**New table**: `lenders (id uuid primary key references auth.users(id),
+org_name text)` — mirrors `profiles`'s shape exactly, one row per real
+lender org account.
+
+**New linkage, fully additive**: `pending_consents`/`grants_table` gained a
+nullable `lender_id uuid references lenders(id)`. Every pre-existing row
+(the seeded demo grant, anything from `POST /v1/consent/simulate`) keeps
+`lender_id = null` — harmless, since no real lender's uid can ever match
+`null`. `grants_table` also gained `will_share jsonb not null default
+'[]'`, since real per-grant consent enforcement (below) needs to survive
+past approval into the long-lived grant, not just exist on the
+pre-approval `pending_consents` row.
+
+**New RLS policies, additive only** (Postgres combines multiple permissive
+policies with OR — none of this weakens the existing borrower `owner_all`
+policies):
+- `lender_read_own_pending` / `lender_read_own_grants`: a lender may
+  `select` its own outgoing rows (`lender_id = auth.uid()`).
+- `lender_read_granted_profiles` / `lender_read_granted_period_metrics`:
+  a lender may `select` a borrower's `profiles`/`period_metrics` rows only
+  while an **unexpired** grant naming that exact lender exists (an
+  `exists(...)` join through `grants_table`, checked against the epoch-ms
+  `expires_at` convention already established by this schema). A revoke or
+  a plain expiry both immediately cut off visibility — nothing needs to
+  actively run.
+
+**Lender-initiated requests go through a `SECURITY DEFINER` Postgres
+function** (`create_lender_consent_request`), not a plain RLS-scoped
+insert — a lender's request names a borrower `user_id` that isn't the
+inserting principal, which no `with check` column-equality clause can
+express. The function does its own authorization check in the body (real
+`lenders` row required, borrower looked up by email via `auth.users` —
+which the `authenticated` role has no grant on at all, only this function
+can read it) instead of relying on RLS, and hardcodes the one fixed,
+platform-defined sharing package (there's no per-field consent picker UI
+anywhere in this app — approval is a single Allow/Deny) — a lender can
+never author its own `will_share`/`wont_share` text or spoof a different
+org name than its own real `org_name`. It also inserts the borrower's
+notification itself, for the same reason: that row's `user_id` is the
+borrower, which the lender's own restricted role can't satisfy either.
+
+**Consent categories, real not descriptive** (`app/consent_categories.py`):
+`will_share` moved from freeform display text to a small fixed set of
+category keys (`repayment_history`, `savings_activity`, `fuliza_reliance`,
+`account_age`), each mapped to the `scoring.py` signal label it gates (or
+`None` for `account_age`, which gates `accountAgeDays` instead of a
+signal). `app/serializers.py`'s `consent_to_json` maps keys back to the
+same display labels the consumer app has always shown — **zero consumer
+frontend changes** despite the storage format changing underneath it. The
+lender-facing endpoints actually filter `result.signals` by the specific
+grant's own `will_share` — not a global assumption — so an older or
+differently-configured grant is respected as stored, not overridden.
+
+**Separate cookie pair** (`sw_lender_access_token`/`sw_lender_refresh_token`
+vs. the borrower's `sw_access_token`/`sw_refresh_token`) — lets a developer
+be logged into both apps in one browser without one session clobbering the
+other. `app/auth.py`'s `set_auth_cookies`/`clear_auth_cookies`/
+`get_current_user` all take optional `access_cookie`/`refresh_cookie`
+kwargs defaulting to the borrower pair, so every existing borrower call
+site needed zero changes.
+
+**New endpoints**: `POST /v1/lender/auth/{signup,login,logout}`,
+`GET /v1/lender/auth/session`, `POST /v1/lender/consent-requests`,
+`GET /v1/lender/applicants`, `GET /v1/lender/applicants/{grant_id}`,
+`GET /v1/lender/dashboard?range=7d|30d|90d`. The dashboard's mini-stats,
+segments, and busiest-day histogram are all real, computed from real
+grants via the existing `compute_score` — the mock's fabricated
+score-history sparkline was dropped in favor of a real avg-current-vs-avg-
+previous comparison, since no per-day score history exists anywhere in
+this schema.
+
+**`scripts/seed_demo_tenants.py`** (not application code, run manually):
+creates 2 demo lenders + 8 demo borrowers with varied real `period_metrics`
+and real grants via the Supabase Admin API — the first real use of
+`SUPABASE_SERVICE_ROLE_KEY`. Idempotent; every score it produces is a
+genuine `compute_score()` output, not a hardcoded number.
+
+**Verified live against the real Supabase database, not just
+type-checked**: lender signup produces a `lenders` row and zero `profiles`
+rows; a borrower session and a lender session coexist in one cookie jar,
+both independently authenticated; **a direct Postgres query as a lender,
+with no WHERE clause at all**, returns only the one borrower who actually
+granted that lender access, on `profiles`, `period_metrics`, and
+`grants_table` alike (the same method the original Supabase migration used
+to verify borrower isolation); revoking that grant immediately drops the
+lender back to zero rows on the same direct query; a grant created with
+`will_share=["repayment_history"]` returns exactly one signal and no
+`accountAgeDays` from `GET /v1/lender/applicants/{id}` while `score` is
+still present; a lender viewing another lender's grant gets 404, not 403;
+a lender viewing an unregistered borrower email's consent request also
+gets 404 (accepted email-enumeration trade-off, see below).
+
+**Known gap, not fixed in this pass**: `POST /v1/lender/consent-requests`
+lets an authenticated lender learn whether a given email has a PesaScore
+borrower account (404 vs. success) — accepted because lenders are vetted
+registered accounts, not anonymous users, and the endpoint is rate-limited
+(20/minute), but a genuinely privacy-maximal design would return an
+identical response either way.
+
 ## Deployment (Render)
 
 This has run locally only until now. `render.yaml` is a Blueprint — connect
@@ -528,7 +638,11 @@ exists to work around.
 - **Email OTP signup** — still not built. Supabase Auth is configured now, so
   this is no longer blocked on credentials the way it was; it just hasn't
   been built as part of this pass, which focused on password auth.
-- Lender app integration.
+- ~~Lender app integration~~ — done, see "Lender identity, real consent, and
+  consent enforcement" above. What's left there: no UI in the lender app
+  for actually *sending* a consent request (the endpoint exists and is
+  verified via curl), and the email-enumeration trade-off noted in that
+  section.
 - Testing against a *second* real statement to see if the record-boundary
   parsing and the (amount, balance) reading generalize, or were specific to
   the one export tested. Testing the digital-lender keywords/paybill numbers

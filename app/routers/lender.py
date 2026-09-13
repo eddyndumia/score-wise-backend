@@ -36,13 +36,17 @@ def _flag_and_status(score: int) -> tuple[str, str]:
     return "high", "Declined"
 
 
-async def _load_applicant(conn, grant: dict) -> dict:
+async def _score_grant(conn, grant: dict):
+    """Shared by _load_applicant and the dashboard's averaging — one place
+    that loads a grant's borrower metrics and computes the real score."""
     profile_row = await (await conn.execute(
         "select email, created_at from profiles where id = %s", (grant["user_id"],)
     )).fetchone()
     current, previous = await load_period_metrics(conn, grant["user_id"])
-    result = compute_score(current, previous)
+    return profile_row, compute_score(current, previous)
 
+
+def _applicant_dict(grant: dict, profile_row: dict | None, result) -> dict:
     will_share = grant["will_share"] or []
     flag, status = _flag_and_status(result.score)
     account_age_days = None
@@ -57,7 +61,7 @@ async def _load_applicant(conn, grant: dict) -> dict:
         "score": result.score,
         "flag": flag,
         "status": status,
-        "appliedOn": grant["created_at"],
+        "appliedOn": grant["created_at"].date().isoformat(),
         "accountAgeDays": account_age_days,
         "signals": [
             {"label": s.label, "value": s.value, "status": s.status, "explanation": s.explanation}
@@ -66,9 +70,14 @@ async def _load_applicant(conn, grant: dict) -> dict:
     }
 
 
+async def _load_applicant(conn, grant: dict) -> dict:
+    profile_row, result = await _score_grant(conn, grant)
+    return _applicant_dict(grant, profile_row, result)
+
+
 class ConsentRequestBody(BaseModel):
-    borrower_email: str
-    grant_duration_days: int = 30
+    borrowerEmail: str
+    grantDurationDays: int = 30
 
 
 @router.post("/v1/lender/consent-requests")
@@ -78,7 +87,7 @@ async def create_consent_request(request: Request, body: ConsentRequestBody, len
         try:
             row = await (await conn.execute(
                 "select * from create_lender_consent_request(%s, %s)",
-                (body.borrower_email, body.grant_duration_days),
+                (body.borrowerEmail, body.grantDurationDays),
             )).fetchone()
         except (InsufficientPrivilege, NoDataFound) as e:
             # The function raises for both "not a registered lender"
@@ -127,9 +136,12 @@ async def get_dashboard(range: str = Query("30d", pattern="^(7d|30d|90d)$"), len
             (lender.id, since_ms),
         )).fetchall()
 
-        applicants = [await _load_applicant(conn, g) for g in grants if g["expires_at"] > _now_ms()]
+        active_grants = [g for g in grants if g["expires_at"] > _now_ms()]
+        scored = [await _score_grant(conn, g) for g in active_grants]
+        applicants = [_applicant_dict(g, profile_row, result) for g, (profile_row, result) in zip(active_grants, scored)]
 
     scores = [a["score"] for a in applicants]
+    previous_scores = [result.previous_score for _, result in scored]
     approved = sum(1 for a in applicants if a["status"] == "Approved")
     review = sum(1 for a in applicants if a["status"] == "Review")
     declined = sum(1 for a in applicants if a["status"] == "Declined")
@@ -156,8 +168,15 @@ async def get_dashboard(range: str = Query("30d", pattern="^(7d|30d|90d)$"), len
         # No real per-day score history exists anywhere in this schema (only
         # a current/previous snapshot per borrower) — a fabricated smooth
         # sparkline was deliberately dropped in favor of this real, coarser
-        # comparison. See the project plan's "dashboard sparkline" decision.
+        # avg-current-vs-avg-previous comparison. See the project plan's
+        # "dashboard sparkline" decision.
         "avgScore": round(sum(scores) / len(scores)) if scores else None,
+        "avgPreviousScore": round(sum(previous_scores) / len(previous_scores)) if previous_scores else None,
+        "avgDelta": (
+            round(sum(scores) / len(scores)) - round(sum(previous_scores) / len(previous_scores))
+            if scores and previous_scores
+            else None
+        ),
         "segments": [
             {"label": "Approved", "count": approved, "color": "green"},
             {"label": "Manual review", "count": review, "color": "amber"},

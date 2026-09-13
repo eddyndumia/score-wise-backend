@@ -29,7 +29,7 @@ router = APIRouter()
 class LenderCredentials(BaseModel):
     email: str
     password: str
-    org_name: str
+    orgName: str
 
 
 class LenderLogin(BaseModel):
@@ -67,12 +67,12 @@ async def lender_signup(body: LenderCredentials, response: Response):
 
     user_id = data["user"]["id"]
     async with db_conn(user_id) as conn:
-        await seed_new_lender(conn, user_id, body.org_name)
+        await seed_new_lender(conn, user_id, body.orgName)
 
     set_auth_cookies(
         response, data["access_token"], data["refresh_token"], access_cookie=COOKIE_LENDER_ACCESS, refresh_cookie=COOKIE_LENDER_REFRESH
     )
-    return {"email": data["user"].get("email"), "orgName": body.org_name}
+    return {"email": data["user"].get("email"), "orgName": body.orgName}
 
 
 @router.post("/v1/lender/auth/login")
