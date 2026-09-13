@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,10 @@ from slowapi.errors import RateLimitExceeded
 from .db import close_pool, open_pool
 from .rate_limit import limiter
 from .routers import account, auth, cash_flow, consent, notifications, profile, requests, savings_goal, score, statements
+
+# Comma-separated in production (e.g. the deployed Netlify URL) — defaults to
+# just the consumer app's local dev server so nothing changes for local dev.
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
 
 
 @asynccontextmanager
@@ -33,7 +38,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # requires an explicit origin list, not "*", per the CORS spec anyway).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

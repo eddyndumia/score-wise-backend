@@ -30,12 +30,16 @@ SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
 # caches it, matching tokens to the right key by `kid`.
 _jwk_client = jwt.PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
 
-# secure=False is required for plain-http localhost dev; must be true once
-# this is ever served over TLS. SameSite=Lax works across localhost:5173 <->
-# localhost:8000 because SameSite is site-scoped (registrable domain), not
-# port-scoped — both are "localhost". A future deploy to different real
-# domains would need SameSite=None; Secure=True instead.
+# secure=False + samesite=lax is required for plain-http localhost dev (both
+# localhost:5173 and localhost:8000 count as the same "site" despite the
+# different ports, so Lax cookies still flow). A real deployment puts the
+# frontend and backend on genuinely different domains (e.g. Netlify +
+# Render), which is actually cross-site — SameSite=None + Secure=True is
+# required there, or the browser silently drops the cookie on the frontend's
+# cross-origin fetch. Set COOKIE_SECURE=true and COOKIE_SAMESITE=none in that
+# environment's variables.
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_SAMESITE = os.environ.get("COOKIE_SAMESITE", "lax").lower()
 COOKIE_ACCESS = "sw_access_token"
 COOKIE_REFRESH = "sw_refresh_token"
 ACCESS_MAX_AGE = 60 * 60  # Supabase access tokens default to 1h
@@ -52,7 +56,7 @@ def _cookie_kwargs(max_age: int) -> dict:
     return {
         "httponly": True,
         "secure": COOKIE_SECURE,
-        "samesite": "lax",
+        "samesite": COOKIE_SAMESITE,
         "max_age": max_age,
         "path": "/",
     }

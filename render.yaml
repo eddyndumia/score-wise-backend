@@ -1,0 +1,27 @@
+# Render Blueprint — lets Render auto-detect the service config when you
+# connect this repo (New + -> Blueprint), instead of filling in build/start
+# commands by hand. Env vars marked sync: false must be set manually in the
+# Render dashboard after the service is created (never commit real secrets
+# here) — see .env.example for what each one is and where to find it.
+services:
+  - type: web
+    name: scorewise-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: "none"
+      - key: ALLOWED_ORIGINS
+        sync: false

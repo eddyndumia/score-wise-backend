@@ -496,6 +496,23 @@ account's `auth.uid()`, with no `WHERE` clause at all, returns only that
 account's rows — confirming RLS itself is the enforcement boundary, not
 application code that happens to filter correctly today.
 
+## Deployment (Render)
+
+This has run locally only until now. `render.yaml` is a Blueprint — connect
+this repo in Render's dashboard (New + → Blueprint) and it picks up the
+build/start commands automatically. Env vars marked `sync: false` in
+`render.yaml` (`SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`, `ALLOWED_ORIGINS`) must be set
+by hand in the dashboard after the service exists — copy the values from the
+local `.env`, and set `ALLOWED_ORIGINS=https://scorewisee.netlify.app` (the
+deployed frontend). `COOKIE_SECURE=true` and
+`COOKIE_SAMESITE=none` are already set in the blueprint — required once the
+frontend and backend are on genuinely different domains (see `app/auth.py`'s
+comment on why `Lax` only worked for local dev's same-site-different-port
+setup). Uses a plain `uvicorn app.main:app` start command, not `run.py` —
+Render's Linux runtime doesn't hit the Windows event-loop issue `run.py`
+exists to work around.
+
 ## Not done yet
 
 - Real database (Supabase) and real auth / multi-user support — **done**, see
