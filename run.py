@@ -23,7 +23,10 @@ if __name__ == "__main__":
     # "Reloading..." the old worker keeps serving stale code forever. Set
     # RELOAD=0 there and restart by hand instead.
     reload = os.environ.get("RELOAD", "1") != "0"
+    # HOST=0.0.0.0 to let a test phone on the same Wi-Fi reach this PC
+    # (debug APK built with API_BASE_URL=http://<PC's LAN IP>:8000).
+    host = os.environ.get("HOST", "127.0.0.1")
     # Without reload (no subprocess), uvicorn on Windows hard-codes
     # ProactorEventLoop and ignores the policy set above, which psycopg can't
     # use — the pool just times out. Naming the loop class covers both modes.
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=reload, loop="asyncio:SelectorEventLoop")
+    uvicorn.run("app.main:app", host=host, port=8000, reload=reload, loop="asyncio:SelectorEventLoop")
