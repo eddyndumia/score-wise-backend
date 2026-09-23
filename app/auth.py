@@ -95,7 +95,7 @@ def verify_access_token(token: str) -> AuthedUser:
     return AuthedUser(id=claims["sub"], email=claims.get("email"))
 
 
-async def _refresh(refresh_token: str) -> dict:
+async def refresh_session(refresh_token: str) -> dict:
     """Calls Supabase's refresh endpoint. Raises on failure (expired/revoked
     refresh token â€” the caller should treat that as a full 401)."""
     async with httpx.AsyncClient() as client:
@@ -134,7 +134,22 @@ async def get_current_user(
     *,
     access_cookie: str = COOKIE_ACCESS,
     refresh_cookie: str = COOKIE_REFRESH,
+    allow_bearer: bool = True,
 ) -> AuthedUser:
+    # The mobile app can't use httpOnly cookies the way a browser does, so it
+    # sends "Authorization: Bearer <access token>" (kept in the OS keystore,
+    # see /v1/auth/token below). No silent refresh on this path: an expired
+    # token 401s with code token_expired and the app calls
+    # /v1/auth/token/refresh itself. Borrower-only — lenders use the web portal.
+    auth_header = request.headers.get("authorization", "")
+    if allow_bearer and auth_header.lower().startswith("bearer "):
+        try:
+            return verify_access_token(auth_header[7:].strip())
+        except jwt.ExpiredSignatureError as e:
+            raise HTTPException(status_code=401, detail={"code": "token_expired", "message": "Session expired"}) from e
+        except jwt.PyJWTError as e:
+            raise HTTPException(status_code=401, detail="Invalid session") from e
+
     access_token = request.cookies.get(access_cookie)
     refresh_token = request.cookies.get(refresh_cookie)
 
@@ -149,7 +164,7 @@ async def get_current_user(
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Not signed in")
 
-    session = await _refresh(refresh_token)
+    session = await refresh_session(refresh_token)
     set_auth_cookies(
         response, session["access_token"], session["refresh_token"], access_cookie=access_cookie, refresh_cookie=refresh_cookie
     )

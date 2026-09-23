@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from ..auth import AuthedUser, get_current_user
 from ..db import db_conn
-from ..metrics_repo import load_period_metrics
+from ..metrics_repo import require_period_metrics
 from ..report import generate_score_report_pdf
 from ..scoring import apply_hypothetical, compute_score
 from ..serializers import score_result_to_json
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/v1/score")
 async def get_score(user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
-        current, previous = await load_period_metrics(conn, user.id)
+        current, previous = await require_period_metrics(conn, user.id)
     result = compute_score(current, previous)
     return score_result_to_json(result)
 
@@ -22,7 +22,7 @@ async def get_score(user: AuthedUser = Depends(get_current_user)):
 @router.get("/v1/score/report")
 async def get_score_report(user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
-        current, previous = await load_period_metrics(conn, user.id)
+        current, previous = await require_period_metrics(conn, user.id)
         profile_row = await (await conn.execute("select profile_name from profiles where id = %s", (user.id,))).fetchone()
     result = compute_score(current, previous)
     profile_name = profile_row["profile_name"] if profile_row else None
@@ -40,7 +40,7 @@ async def get_simulate_limits(user: AuthedUser = Depends(get_current_user)):
     metrics — e.g. you can't simulate cutting more Fuliza days than you
     actually used."""
     async with db_conn(user.id) as conn:
-        current, _ = await load_period_metrics(conn, user.id)
+        current, _ = await require_period_metrics(conn, user.id)
     return {
         "fulizaDaysActive": current.fuliza.days_active,
         "latePlusMissed": current.repayments.late + current.repayments.missed,
@@ -57,7 +57,7 @@ class SimulateRequest(BaseModel):
 @router.post("/v1/score/simulate")
 async def simulate_score(body: SimulateRequest, user: AuthedUser = Depends(get_current_user)):
     async with db_conn(user.id) as conn:
-        current, _ = await load_period_metrics(conn, user.id)
+        current, _ = await require_period_metrics(conn, user.id)
     hypothetical = apply_hypothetical(
         current,
         extra_savings=body.extraSavings,

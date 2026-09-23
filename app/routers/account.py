@@ -23,7 +23,7 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
         profile_row = await (await conn.execute(
             "select account_name, profile_name from profiles where id = %s", (user.id,)
         )).fetchone()
-        current, previous = await load_period_metrics(conn, user.id)
+        metrics = await load_period_metrics(conn, user.id)
         cash_flow_row = await (await conn.execute("select series from cash_flow where user_id = %s", (user.id,))).fetchone()
         goal_row = await (await conn.execute(
             "select target_amount, created_at from savings_goals where user_id = %s", (user.id,)
@@ -43,9 +43,9 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
             "accountName": profile_row["account_name"] if profile_row else None,
         },
         "score": {
-            "currentPeriodMetrics": asdict(current),
-            "previousPeriodMetrics": asdict(previous),
-        },
+            "currentPeriodMetrics": asdict(metrics[0]),
+            "previousPeriodMetrics": asdict(metrics[1]),
+        } if metrics else None,
         "cashFlow": cash_flow_row["series"] if cash_flow_row else [],
         "savingsGoal": {"targetAmount": float(goal_row["target_amount"]), "createdAt": goal_row["created_at"]} if goal_row else None,
         "lendersWithAccess": [

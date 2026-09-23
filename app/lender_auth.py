@@ -16,7 +16,7 @@ from .db import db_conn
 
 
 async def get_current_lender_principal(request: Request, response: Response) -> AuthedUser:
-    return await get_current_user(request, response, access_cookie=COOKIE_LENDER_ACCESS, refresh_cookie=COOKIE_LENDER_REFRESH)
+    return await get_current_user(request, response, access_cookie=COOKIE_LENDER_ACCESS, refresh_cookie=COOKIE_LENDER_REFRESH, allow_bearer=False)
 
 
 @dataclass

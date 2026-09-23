@@ -1,15 +1,14 @@
 import json
-import random
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..auth import AuthedUser, get_current_user
-from ..consent_categories import STANDARD_WILL_SHARE
 from ..db import db_conn
 from ..serializers import consent_to_json, grant_to_json
-from ..store import DAY_MS, SIMULATED_LENDER_POOL
+from ..metrics_repo import load_period_metrics
+from ..store import DAY_MS
 
 router = APIRouter()
 
@@ -80,11 +79,20 @@ async def respond_to_consent(request_id: str, body: ConsentResponse, user: Authe
             await conn.execute("update pending_consents set status = 'denied' where id = %s", (request_id,))
             return {"ok": True, "grant": None}
 
+        # The borrower sees their score before anyone else does, so there's
+        # nothing to share until a statement has been uploaded. The request
+        # stays pending; the app sends them to upload first.
+        if await load_period_metrics(conn, user.id) is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "no_score", "message": "Upload your M-Pesa statement first, so you can see your score before you share it."},
+            )
+
         await conn.execute("update pending_consents set status = 'approved' where id = %s", (request_id,))
 
         # lender_id/will_share carry through so real per-grant enforcement
-        # (routers/lender.py) survives past approval — a demo/simulated
-        # request (lender_id null) produces a grant no real lender endpoint
+        # (routers/lender.py) survives past approval — a request with no
+        # lender_id (only pre-existing rows) produces a grant no lender endpoint
         # can ever match, exactly as before this pass.
         expires_at = _now_ms() + row["grant_duration_days"] * DAY_MS
         grant_row = await (await conn.execute(
@@ -94,36 +102,3 @@ async def respond_to_consent(request_id: str, body: ConsentResponse, user: Authe
         )).fetchone()
     return {"ok": True, "grant": grant_to_json(_grant_row_to_dict(grant_row))}
 
-
-@router.post("/v1/consent/simulate")
-async def simulate_incoming_request(user: AuthedUser = Depends(get_current_user)):
-    will_share = STANDARD_WILL_SHARE
-    wont_share = ["Full transaction amounts", "Contact list", "Balances on other accounts"]
-
-    async with db_conn(user.id) as conn:
-        # Only status='pending' counts as "already asked" — a resolved
-        # (approved/denied) row from an earlier simulate no longer blocks
-        # that same demo lender name from being picked again.
-        pending = await (await conn.execute(
-            "select lender_name from pending_consents where user_id = %s and status = 'pending'", (user.id,)
-        )).fetchall()
-        granted = await (await conn.execute("select lender_name from grants_table where user_id = %s", (user.id,))).fetchall()
-        pending_names = {r["lender_name"] for r in pending}
-        granted_names = {r["lender_name"] for r in granted}
-        available = [name for name in SIMULATED_LENDER_POOL if name not in pending_names and name not in granted_names]
-        lender_name = random.choice(available) if available else random.choice(SIMULATED_LENDER_POOL)
-
-        row = await (await conn.execute(
-            """
-            insert into pending_consents (user_id, lender_name, grant_duration_days, will_share, wont_share)
-            values (%s, %s, 14, %s, %s)
-            returning id, lender_name, grant_duration_days, will_share, wont_share
-            """,
-            (user.id, lender_name, json.dumps(will_share), json.dumps(wont_share)),
-        )).fetchone()
-
-        await conn.execute(
-            "insert into notifications (user_id, kind, message, created_at) values (%s, %s, %s, %s)",
-            (user.id, "consent_request", f"{lender_name} wants access to your credit profile.", _now_ms()),
-        )
-    return consent_to_json(_consent_row_to_dict(row))

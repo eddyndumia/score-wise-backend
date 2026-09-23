@@ -11,14 +11,22 @@ import json
 
 REVIEW_TTL_HOURS = 24
 
+# Exactly what pdf_parser._metrics_from_tagged_rows reads. Transaction
+# descriptions, counterparties and phone numbers are dropped before anything
+# is stored — "we keep the numbers the score needs and nothing else" applies
+# to this 24h holding table too, not just the final score. The group labels
+# the borrower is asked about go back in the upload response, not in here.
+_STORED_FIELDS = ("date", "amount", "status", "tag", "isFuliza", "groupId")
+
 
 async def save_pending_review(conn, user_id: str, session_id: str, rows: list[dict]) -> None:
+    minimal = [{k: r[k] for k in _STORED_FIELDS} for r in rows]
     await conn.execute(
         """
         insert into pending_reviews (session_id, user_id, rows, expires_at)
         values (%s, %s, %s, now() + make_interval(hours => %s))
         """,
-        (session_id, user_id, json.dumps(rows), REVIEW_TTL_HOURS),
+        (session_id, user_id, json.dumps(minimal), REVIEW_TTL_HOURS),
     )
 
 

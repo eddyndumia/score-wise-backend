@@ -42,8 +42,12 @@ async def _score_grant(conn, grant: dict):
     profile_row = await (await conn.execute(
         "select email, created_at from profiles where id = %s", (grant["user_id"],)
     )).fetchone()
-    current, previous = await load_period_metrics(conn, grant["user_id"])
-    return profile_row, compute_score(current, previous)
+    metrics = await load_period_metrics(conn, grant["user_id"])
+    # None when the borrower has no statement-based score. Approval is
+    # blocked until one exists (routers/consent.py), so this only happens
+    # for rows from before that rule or after a borrower resets their
+    # account — skipped by callers rather than shown as a made-up number.
+    return profile_row, (compute_score(*metrics) if metrics else None)
 
 
 def _applicant_dict(grant: dict, profile_row: dict | None, result) -> dict:
@@ -70,9 +74,9 @@ def _applicant_dict(grant: dict, profile_row: dict | None, result) -> dict:
     }
 
 
-async def _load_applicant(conn, grant: dict) -> dict:
+async def _load_applicant(conn, grant: dict) -> dict | None:
     profile_row, result = await _score_grant(conn, grant)
-    return _applicant_dict(grant, profile_row, result)
+    return _applicant_dict(grant, profile_row, result) if result else None
 
 
 class ConsentRequestBody(BaseModel):
@@ -135,7 +139,8 @@ async def list_applicants(lender: AuthedLender = Depends(get_current_lender)):
             " where lender_id = %s and expires_at > %s order by created_at desc",
             (lender.id, _now_ms()),
         )).fetchall()
-        return [await _load_applicant(conn, g) for g in grants]
+        applicants = [await _load_applicant(conn, g) for g in grants]
+        return [a for a in applicants if a is not None]
 
 
 @router.get("/v1/lender/applicants/{grant_id}")
@@ -148,7 +153,10 @@ async def get_applicant(grant_id: str, lender: AuthedLender = Depends(get_curren
         )).fetchone()
         if grant is None:
             raise HTTPException(status_code=404, detail="Applicant not found")
-        return await _load_applicant(conn, grant)
+        applicant = await _load_applicant(conn, grant)
+        if applicant is None:
+            raise HTTPException(status_code=404, detail="Applicant not found")
+        return applicant
 
 
 @router.get("/v1/lender/dashboard")
@@ -162,8 +170,10 @@ async def get_dashboard(range: str = Query("30d", pattern="^(7d|30d|90d)$"), len
         )).fetchall()
 
         active_grants = [g for g in grants if g["expires_at"] > _now_ms()]
-        scored = [await _score_grant(conn, g) for g in active_grants]
-        applicants = [_applicant_dict(g, profile_row, result) for g, (profile_row, result) in zip(active_grants, scored)]
+        scored_all = [(g, *await _score_grant(conn, g)) for g in active_grants]
+        scored_all = [(g, profile_row, result) for g, profile_row, result in scored_all if result is not None]
+        scored = [(profile_row, result) for _, profile_row, result in scored_all]
+        applicants = [_applicant_dict(g, profile_row, result) for g, profile_row, result in scored_all]
 
     scores = [a["score"] for a in applicants]
     previous_scores = [result.previous_score for _, result in scored]
