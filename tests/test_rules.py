@@ -122,3 +122,19 @@ def test_lender_routes_ignore_bearer_tokens(monkeypatch):
     with pytest.raises(HTTPException) as e:
         run(auth.get_current_user(_request({"Authorization": "Bearer good"}), Response(), allow_bearer=False))
     assert e.value.status_code == 401
+
+
+# Right to erasure ------------------------------------------------------------------
+
+
+def test_reset_wipes_every_table_holding_borrower_data(monkeypatch):
+    from app.routers import account
+
+    conn = FakeConn()
+    monkeypatch.setattr(account, "db_conn", fake_db_conn(conn))
+    run(account.delete_account(Response(), USER))
+    wiped = {sql.split("delete from ")[1].split()[0] for sql, _ in conn.calls if sql.startswith("delete from")}
+    assert wiped == {
+        "period_metrics", "cash_flow", "pending_consents", "grants_table",
+        "savings_goals", "notifications", "pending_reviews",
+    }

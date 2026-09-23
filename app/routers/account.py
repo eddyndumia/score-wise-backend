@@ -79,7 +79,7 @@ async def delete_account(response: Response, user: AuthedUser = Depends(get_curr
     current session too, since staying signed in past a data wipe makes no
     sense — the frontend lands back at Login."""
     async with db_conn(user.id) as conn:
-        for table in ("period_metrics", "cash_flow", "pending_consents", "grants_table", "savings_goals", "notifications"):
+        for table in ("period_metrics", "cash_flow", "pending_consents", "grants_table", "savings_goals", "notifications", "pending_reviews"):
             await conn.execute(f"delete from {table} where user_id = %s", (user.id,))
         await conn.execute(
             "update profiles set account_name = null, profile_name = null where id = %s", (user.id,)
