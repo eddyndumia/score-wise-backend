@@ -122,7 +122,7 @@ handles itself.
   Real statements get genuinely bucketed data (`pdf_parser.compute_cash_flow_series`
   — ~8 roughly-equal time windows across the whole statement, dated labels,
   summed from actual transaction amounts, excluding Fuliza's internal ledger
-  legs since those aren't real cash flow). The no-statement default is a
+  legs since those aren't real cash flow). The no-statement default is an
   empty series (there used to be a made-up "Week 1..8" series; removed). Computed once at upload time regardless of whether
   ambiguous-group review is pending — whether a payment turns out to be "a
   loan repayment" doesn't change whether it was money leaving the account, so
