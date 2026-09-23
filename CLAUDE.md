@@ -1,8 +1,16 @@
 # PesaScore — Backend
 
-FastAPI service shared by both PesaScore apps (`../pesascore-consumer`,
-`../pesascore-lender`). Currently only the consumer app is wired up to it —
-the lender app still runs on its own local mocks (see its CLAUDE.md).
+FastAPI service shared by every PesaScore client: the Flutter borrower app
+(`../pesascore-mobile`, the direction going forward, bearer-token auth), the
+React borrower web app (`../pesascore-consumer`, kept until mobile matches
+it), and the lender web portal (`../pesascore-lender`). Both web apps use
+cookie auth.
+
+**Requirements live in `docs/REQUIREMENTS.md`**, taken from the public
+PesaScore post. If code and that file disagree, the code is wrong. The
+2026-09-23 requirements pass removed every made-up number: a new account has
+no score, no cash flow, no lender requests and no grants until the borrower
+uploads a statement or a real lender asks.
 
 ## Status: real, working, real infra
 
@@ -17,6 +25,14 @@ gotchas, and what's still deliberately out of scope.
 ```
 .\venv\Scripts\python.exe run.py
 ```
+
+`RELOAD=0` turns off auto-reload. Use it whenever the server runs without a
+console (a background job, an agent's shell): uvicorn's Windows reloader stops
+the old worker with a Ctrl+C console event, which a console-less process
+never gets, so after "Reloading..." the old code keeps serving forever. In a
+normal terminal, reload works. `run.py` also pins `SelectorEventLoop`
+explicitly, because without reload uvicorn hard-codes `ProactorEventLoop` on
+Windows and ignores the policy, and psycopg's pool then just times out.
 
 **Use `run.py`, not `uvicorn app.main:app` directly** — Windows defaults
 asyncio to `ProactorEventLoop`, which psycopg's async pool (`app/db.py`) can't
@@ -49,26 +65,34 @@ auth works and why it's cookie-based rather than a bearer token the frontend
 handles itself.
 
 - `POST /v1/auth/signup` / `POST /v1/auth/login` — `{email, password}`,
-  proxies Supabase Auth, sets the session cookies on success. Signup also
-  seeds the new account's default rows (`app/seed.py`).
+  proxies Supabase Auth, sets the session cookies on success. Signup creates
+  the account's `profiles` row and nothing else (`app/seed.py`).
+- `POST /v1/auth/token/signup`, `POST /v1/auth/token`,
+  `POST /v1/auth/token/refresh` (`{refreshToken}`), `POST /v1/auth/token/logout`
+  — the mobile app's version: same Supabase accounts, but tokens come back in
+  the body (`accessToken`, `refreshToken`, `expiresIn`) and are sent as
+  `Authorization: Bearer`. An expired bearer token 401s with code
+  `token_expired` (no silent refresh on that path). Bearer is borrower-only;
+  lender routes ignore it.
 - `POST /v1/auth/logout` — clears the session cookies.
 - `GET /v1/auth/session` — `{authenticated, email?}`, used by the frontend on
   boot to decide where to route (see the consumer app's `lib/authSession.ts`).
-- `GET /v1/score` — computes and returns the current score from whatever
-  metrics are in this account's `period_metrics` rows (seeded defaults, or
-  the result of the last statement upload).
+- `GET /v1/score` — computes and returns the current score from this
+  account's `period_metrics` rows (the last statement upload). 404
+  `{"code": "no_score"}` before any upload. Same for `/v1/score/report`,
+  `/v1/score/simulate` and `/v1/score/simulate/limits`. There are no default
+  metrics anywhere any more.
 - `GET /v1/consent` — the list of pending consent requests (a real queue,
   `store.pending_consents` — see "Multi-lender consent queue" below).
 - `GET /v1/consent/{id}` — a single pending request by id; 404 if not found
   or already resolved.
 - `POST /v1/consent/{id}/respond` — `{"approve": bool}`. Approving creates a
-  real grant in the store; denying just removes the request from the queue.
-  404 if the id isn't pending (already responded to, or never existed).
-- `POST /v1/consent/simulate` — demo-only "incoming request" trigger (no real
-  push mechanism from an actual lender exists). Adds a new pending request
-  from a random name in a small fixed pool, avoiding a name already pending
-  or already granted so repeated clicks don't look like duplicates from the
-  same lender.
+  real grant; denying marks the request denied. 404 if the id isn't pending
+  (already responded to, or never existed). Approving 409s with
+  `{"code": "no_score"}` until the borrower has uploaded a statement — they
+  see their score before any lender does, and the request stays pending.
+- ~~`POST /v1/consent/simulate`~~ — removed 2026-09-23. Requests only come
+  from real lenders now (`POST /v1/lender/consent-requests`).
 - `GET /v1/requests` — active grants.
 - `POST /v1/requests/{id}/revoke` — removes a grant. 404 if it doesn't exist.
 - `POST /v1/statements/upload` — multipart `file` (+ optional `password`
@@ -99,8 +123,7 @@ handles itself.
   — ~8 roughly-equal time windows across the whole statement, dated labels,
   summed from actual transaction amounts, excluding Fuliza's internal ledger
   legs since those aren't real cash flow). The no-statement default is a
-  labeled-as-such demo series (`store.py`'s `_default_cash_flow`, "Week 1"
-  etc., not real dates). Computed once at upload time regardless of whether
+  empty series (there used to be a made-up "Week 1..8" series; removed). Computed once at upload time regardless of whether
   ambiguous-group review is pending — whether a payment turns out to be "a
   loan repayment" doesn't change whether it was money leaving the account, so
   this doesn't need to wait on classify. Verified against the real statement:
@@ -186,6 +209,11 @@ excluded because in the one real statement tested they only ever carried
 non-loan payments (Glovo, subscriptions, etc.) — treat that exclusion as
 unverified for lenders who route through an aggregator instead of a direct
 bank paybill.
+
+Only `date`, `amount`, `status`, `tag`, `isFuliza` and `groupId` are stored
+per row (`reviews_repo._STORED_FIELDS`). Transaction descriptions and
+counterparties are dropped before anything is saved, per the post's "we keep
+the numbers the score needs and nothing else".
 
 Sessions live in a real `pending_reviews` Postgres table now (see
 `app/reviews_repo.py`), not an in-memory dict — a restart no longer loses an
