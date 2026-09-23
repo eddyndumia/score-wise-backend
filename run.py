@@ -8,6 +8,7 @@ has to be set here, before uvicorn ever starts.
 """
 
 import asyncio
+import os
 import sys
 
 if sys.platform == "win32":
@@ -16,4 +17,13 @@ if sys.platform == "win32":
 import uvicorn
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    # On Windows, uvicorn's reloader stops the old worker with a Ctrl+C
+    # console event. A process started without a console (a background job,
+    # a CI runner, an agent's shell) never receives it, so after
+    # "Reloading..." the old worker keeps serving stale code forever. Set
+    # RELOAD=0 there and restart by hand instead.
+    reload = os.environ.get("RELOAD", "1") != "0"
+    # Without reload (no subprocess), uvicorn on Windows hard-codes
+    # ProactorEventLoop and ignores the policy set above, which psycopg can't
+    # use — the pool just times out. Naming the loop class covers both modes.
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=reload, loop="asyncio:SelectorEventLoop")

@@ -12,10 +12,11 @@ from .routers import account, auth, cash_flow, consent, lender, lender_auth, not
 
 # Comma-separated in production (e.g. the deployed Netlify URLs) — defaults
 # to both apps' local dev servers so nothing changes for local dev. The
-# lender app's Vite dev server is pinned to 5174 (vite.config.ts) so this
+# lender app's Vite dev server is pinned to 5174 (vite.config.ts), and the
+# Flutter app's web build to 5175 (flutter run --web-port 5175), so this
 # default stays accurate instead of racing Vite's auto-increment behavior.
 ALLOWED_ORIGINS = [
-    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174").split(",") if o.strip()
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:5175").split(",") if o.strip()
 ]
 
 
