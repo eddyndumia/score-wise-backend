@@ -20,7 +20,7 @@ Status key: **done** (built and checked against the running system), **partial**
 | B6 | Score between 300 and 850 with the three things that built it: repayment reliability, Fuliza reliance, savings vs income | done |
 | B7 | Each signal comes with a plain explanation of why it's there and what would move it | done (explanation + recommendation per signal) |
 | B8 | Simulator: e.g. cut Fuliza by ten days, save an extra 5,000 a month | done |
-| B9 | A lender's request arrives on the phone saying who is asking and exactly what they'll see | partial: in-app notifications with unread count, refreshed when the app opens; no push notification yet (needs Firebase) |
+| B9 | A lender's request arrives on the phone saying who is asking and exactly what they'll see | partial: in-app notifications; Android push built (FCM, says who is asking, nothing financial, tap opens the request). Sending needs FIREBASE_SERVICE_ACCOUNT_FILE; not yet tried on a real phone. iOS push open |
 | B10 | Borrower says yes or no | done |
 | B11 | On yes, the lender sees the score and only the parts agreed to, for a set time | done (will_share filtering + expiry) |
 | B12 | Borrower can pull access back whenever they want | done (revoke) |
