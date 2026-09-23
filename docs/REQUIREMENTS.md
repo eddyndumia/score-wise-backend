@@ -12,15 +12,15 @@ Status key: **done** (built and checked against the running system), **partial**
 
 | # | Requirement (from the post) | Status |
 |---|---|---|
-| B1 | Guide the borrower to download their statement from the M-PESA app or USSD, the same way they would for a loan application | done in the web app (StatementInstructions); mobile: open |
-| B2 | Upload the statement PDF; if it's password protected, type the password | done (backend + web); mobile: open |
+| B1 | Guide the borrower to download their statement from the M-PESA app or USSD, the same way they would for a loan application | done (web and mobile) |
+| B2 | Upload the statement PDF; if it's password protected, type the password | done (web and mobile) |
 | B3 | The PDF is read on the server, in memory, and thrown away. Never saved | done. Also: the 24h review session now stores only date/amount/status/tag per row, no descriptions or counterparties (fixed 2026-09-23) |
 | B4 | Sort every transaction into repayments, Fuliza, savings, everything else | done (pdf_parser.classify_rows) |
 | B5 | Where it can't tell, ask. Bank paybills are shown by bank and the borrower answers whether they were loan repayments | done (needs_review + classify) |
 | B6 | Score between 300 and 850 with the three things that built it: repayment reliability, Fuliza reliance, savings vs income | done |
 | B7 | Each signal comes with a plain explanation of why it's there and what would move it | done (explanation + recommendation per signal) |
 | B8 | Simulator: e.g. cut Fuliza by ten days, save an extra 5,000 a month | done |
-| B9 | A lender's request arrives on the phone saying who is asking and exactly what they'll see | partial: request + in-app notification exist; no push notification yet |
+| B9 | A lender's request arrives on the phone saying who is asking and exactly what they'll see | partial: in-app notifications with unread count, refreshed when the app opens; no push notification yet (needs Firebase) |
 | B10 | Borrower says yes or no | done |
 | B11 | On yes, the lender sees the score and only the parts agreed to, for a set time | done (will_share filtering + expiry) |
 | B12 | Borrower can pull access back whenever they want | done (revoke) |
@@ -43,10 +43,10 @@ Status key: **done** (built and checked against the running system), **partial**
 |---|---|---|
 | P1 | Validate weights against real loan outcomes with a lender partner | open |
 | P2 | Parser tested on many more real statements, including aggregator-routed loans | open |
-| P3 | Automated test suite | open |
+| P3 | Automated test suite | partial: backend pytest (parser, scoring, requirement rules, auth, reset) and mobile unit/widget tests, both in CI; no database-level integration tests in CI yet |
 | P4 | Data Protection Act: register with the ODPC, DPIA, consent/access audit log | open (no audit log table yet) |
 | P5 | Work out where a scoring service sits under the CRB regulations | open |
-| P6 | PIN / device lock stored securely, not in plain browser storage | open in web; mobile uses the OS keystore |
+| P6 | PIN / device lock stored securely, not in plain browser storage | done in mobile (salted hash in the OS keystore, lockout, optional biometrics); web app still plain, being retired |
 
 ## Mobile auth
 
