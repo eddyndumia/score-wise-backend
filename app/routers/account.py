@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Response
 
 from ..auth import AuthedUser, clear_auth_cookies, get_current_user
 from ..db import db_conn
+from ..access_log import entry_to_json
 from ..metrics_repo import load_period_metrics
 from ..seed import seed_new_account
 from ..serializers import consent_to_json, grant_to_json
@@ -35,6 +36,10 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
             "select id, lender_name, grant_duration_days, will_share, wont_share from pending_consents where user_id = %s",
             (user.id,),
         )).fetchall()
+        log_rows = await (await conn.execute(
+            "select id, created_at, lender_name, event, detail from access_log where borrower_id = %s order by created_at desc",
+            (user.id,),
+        )).fetchall()
 
     data = {
         "exportedAt": datetime.now(timezone.utc).isoformat(),
@@ -61,6 +66,7 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
             })
             for r in pending_rows
         ],
+        "accessLog": [entry_to_json(r) for r in log_rows],
     }
     body = json.dumps(data, indent=2)
     return Response(
@@ -68,6 +74,20 @@ async def export_data(user: AuthedUser = Depends(get_current_user)):
         media_type="application/json",
         headers={"Content-Disposition": 'attachment; filename="pesascore-data-export.json"'},
     )
+
+
+@router.get("/v1/access-log")
+async def get_access_log(user: AuthedUser = Depends(get_current_user)):
+    """Who asked for, got, lost, or looked at this borrower's score, and when.
+    Newest first. Kept even after a soft account reset: it's a record of what
+    lenders did, not the borrower's score data."""
+    async with db_conn(user.id) as conn:
+        rows = await (await conn.execute(
+            "select id, created_at, lender_name, event, detail from access_log"
+            " where borrower_id = %s order by created_at desc limit 200",
+            (user.id,),
+        )).fetchall()
+    return [entry_to_json(r) for r in rows]
 
 
 @router.delete("/v1/account")

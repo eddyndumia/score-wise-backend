@@ -138,3 +138,59 @@ def test_reset_wipes_every_table_holding_borrower_data(monkeypatch):
         "period_metrics", "cash_flow", "pending_consents", "grants_table",
         "savings_goals", "notifications", "pending_reviews",
     }
+
+
+# Consent / access audit log (P4) -----------------------------------------------------
+
+
+def _logged(conn):
+    return [params[3] for sql, params in conn.calls if sql.startswith("insert into access_log")]
+
+
+def test_approving_and_denying_are_logged(monkeypatch):
+    request = {"lender_name": "Amani", "lender_id": "lender-1", "grant_duration_days": 30, "will_share": ["repayment_history"]}
+    metrics = [
+        {"period": p, "repayments": {"on_time": 1, "late": 0, "missed": 0},
+         "fuliza": {"days_active": 0, "period_days": 30}, "savings": {"total_saved": 0, "total_income": 1}}
+        for p in ("current", "previous")
+    ]
+    conn = FakeConn({"from pending_consents": [request], "from period_metrics": metrics,
+                     "insert into grants_table": [{"id": "g1", "lender_name": "Amani", "expires_at": 1}]})
+    monkeypatch.setattr(consent, "db_conn", fake_db_conn(conn))
+    run(consent.respond_to_consent("req-1", ConsentResponse(approve=True), USER))
+    assert _logged(conn) == ["request_approved"]
+
+    conn = FakeConn({"from pending_consents": [request]})
+    monkeypatch.setattr(consent, "db_conn", fake_db_conn(conn))
+    run(consent.respond_to_consent("req-1", ConsentResponse(approve=False), USER))
+    assert _logged(conn) == ["request_denied"]
+
+
+def test_revoking_leaves_a_record_after_the_grant_is_deleted(monkeypatch):
+    from app.routers import requests as requests_router
+
+    conn = FakeConn({"delete from grants_table": [{"lender_id": "lender-1", "lender_name": "Amani"}]})
+    monkeypatch.setattr(requests_router, "db_conn", fake_db_conn(conn))
+    run(requests_router.revoke_grant("g1", USER))
+    sql, params = [c for c in conn.calls if c[0].startswith("insert into access_log")][0]
+    assert params[:4] == (USER.id, "lender-1", "Amani", "access_revoked")
+
+
+def test_every_score_a_lender_sees_is_logged(monkeypatch):
+    from app.lender_auth import AuthedLender
+    from app.routers import lender as lender_router
+
+    grants = [{"id": "g1", "user_id": "b1", "created_at": None, "will_share": []},
+              {"id": "g2", "user_id": "b2", "created_at": None, "will_share": []}]
+    conn = FakeConn({"from grants_table": grants})
+    monkeypatch.setattr(lender_router, "db_conn", fake_db_conn(conn))
+
+    async def load(_conn, g):
+        return None if g["id"] == "g2" else {"ref": g["id"]}  # g2's borrower has no score yet
+
+    monkeypatch.setattr(lender_router, "_load_applicant", load)
+    me = AuthedLender(id="lender-1", email="l@x.test", org_name="Amani SACCO")
+    shown = run(lender_router.list_applicants(me))
+    assert shown == [{"ref": "g1"}]
+    views = [p for s, p in conn.calls if s.startswith("insert into access_log")]
+    assert [(p[0], p[3]) for p in views] == [("b1", "score_viewed")]  # nothing logged for a score never shown

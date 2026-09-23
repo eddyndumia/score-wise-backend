@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from psycopg.errors import InsufficientPrivilege, NoDataFound
 from pydantic import BaseModel
 
+from ..access_log import log_event
 from ..consent_categories import filter_signals
 from ..db import db_conn
 from ..lender_auth import AuthedLender, get_current_lender
@@ -46,7 +47,7 @@ async def _score_grant(conn, grant: dict):
     # None when the borrower has no statement-based score. Approval is
     # blocked until one exists (routers/consent.py), so this only happens
     # for rows from before that rule or after a borrower resets their
-    # account � skipped by callers rather than shown as a made-up number.
+    # account — skipped by callers rather than shown as a made-up number.
     return profile_row, (compute_score(*metrics) if metrics else None)
 
 
@@ -72,6 +73,14 @@ def _applicant_dict(grant: dict, profile_row: dict | None, result) -> dict:
             for s in filter_signals(result.signals, will_share)
         ],
     }
+
+
+async def _log_view(conn, lender, grant: dict, view: str) -> None:
+    """Every time a lender's screen shows a borrower's score, the borrower can
+    later see that it happened (GET /v1/access-log). The dashboard's averages
+    aren't logged: they never show one borrower's score."""
+    await log_event(conn, borrower_id=str(grant["user_id"]), lender_id=lender.id, lender_name=lender.org_name,
+                    event="score_viewed", detail={"grantId": str(grant["id"]), "view": view})
 
 
 async def _load_applicant(conn, grant: dict) -> dict | None:
@@ -103,6 +112,11 @@ async def create_consent_request(request: Request, body: ConsentRequestBody, len
             # boundary as the pending_consents insert — the lender's own
             # restricted role can't write a row it doesn't own).
             raise HTTPException(status_code=404, detail="No PesaScore borrower account found for that email") from e
+        pending = await (await conn.execute(
+            "select user_id from pending_consents where id = %s and lender_id = %s", (row["id"], lender.id)
+        )).fetchone()
+        await log_event(conn, borrower_id=str(pending["user_id"]), lender_id=lender.id, lender_name=lender.org_name,
+                        event="request_sent", detail={"requestId": str(row["id"]), "days": body.grantDurationDays})
     return {"ok": True, "requestId": str(row["id"])}
 
 
@@ -139,8 +153,14 @@ async def list_applicants(lender: AuthedLender = Depends(get_current_lender)):
             " where lender_id = %s and expires_at > %s order by created_at desc",
             (lender.id, _now_ms()),
         )).fetchall()
-        applicants = [await _load_applicant(conn, g) for g in grants]
-        return [a for a in applicants if a is not None]
+        shown = []
+        for g in grants:
+            applicant = await _load_applicant(conn, g)
+            if applicant is None:
+                continue
+            shown.append(applicant)
+            await _log_view(conn, lender, g, "list")
+        return shown
 
 
 @router.get("/v1/lender/applicants/{grant_id}")
@@ -156,6 +176,7 @@ async def get_applicant(grant_id: str, lender: AuthedLender = Depends(get_curren
         applicant = await _load_applicant(conn, grant)
         if applicant is None:
             raise HTTPException(status_code=404, detail="Applicant not found")
+        await _log_view(conn, lender, grant, "detail")
         return applicant
 
 

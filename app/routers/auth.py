@@ -44,13 +44,13 @@ async def _create_account(email: str, password: str) -> dict:
 
     if resp.status_code >= 400:
         # Supabase returns 422/400 for "already registered" and weak
-        # passwords alike — surface its message, not a generic 500, so the
+        # passwords alike â€” surface its message, not a generic 500, so the
         # app can show something meaningful.
         raise HTTPException(status_code=400, detail=_supabase_error_message(resp))
 
     data = resp.json()
     if not data.get("access_token"):
-        # "Confirm email" is on in the Supabase dashboard — signup succeeded
+        # "Confirm email" is on in the Supabase dashboard â€” signup succeeded
         # but there's no session yet. Both apps assume an immediate session,
         # so surface a clear error instead of getting silently stuck.
         raise HTTPException(

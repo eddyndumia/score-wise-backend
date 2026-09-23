@@ -8,3 +8,4 @@ __pycache__/
 # content instead of a link, so it's excluded rather than double-committed.
 # .agents/skills/ is the real source; this regenerates via `npx skills`.
 .claude/skills/
+cleanup_backup_*.json

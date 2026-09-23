@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..access_log import log_event
 from ..auth import AuthedUser, get_current_user
 from ..db import db_conn
 from ..serializers import consent_to_json, grant_to_json
@@ -77,6 +78,8 @@ async def respond_to_consent(request_id: str, body: ConsentResponse, user: Authe
 
         if not body.approve:
             await conn.execute("update pending_consents set status = 'denied' where id = %s", (request_id,))
+            await log_event(conn, borrower_id=user.id, lender_id=row["lender_id"], lender_name=row["lender_name"],
+                            event="request_denied", detail={"requestId": request_id})
             return {"ok": True, "grant": None}
 
         # The borrower sees their score before anyone else does, so there's
@@ -100,5 +103,9 @@ async def respond_to_consent(request_id: str, body: ConsentResponse, user: Authe
             " values (%s, %s, %s, %s, %s) returning id, lender_name, expires_at",
             (user.id, row["lender_id"], row["lender_name"], expires_at, json.dumps(row["will_share"] or [])),
         )).fetchone()
+        await log_event(conn, borrower_id=user.id, lender_id=row["lender_id"], lender_name=row["lender_name"],
+                        event="request_approved",
+                        detail={"requestId": request_id, "grantId": str(grant_row["id"]), "shares": row["will_share"] or [],
+                                "days": row["grant_duration_days"]})
     return {"ok": True, "grant": grant_to_json(_grant_row_to_dict(grant_row))}
 

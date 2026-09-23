@@ -12,6 +12,39 @@ PesaScore post. If code and that file disagree, the code is wrong. The
 no score, no cash flow, no lender requests and no grants until the borrower
 uploads a statement or a real lender asks.
 
+## Consent and access audit log (2026-09-23)
+
+`access_log` (`supabase/migrations/20260923_access_log.sql`, also appended to
+the end of `schema.sql`), written through `app/access_log.py` inside the
+caller's own RLS-scoped transaction. Events: `request_sent` (lender),
+`request_approved` / `request_denied` / `access_revoked` (borrower),
+`score_viewed` (lender, once per applicant shown on the list or detail
+screen; dashboard averages aren't logged since they never show one
+borrower's score).
+
+- **Append-only**: the `authenticated` role has only SELECT and INSERT, and
+  RLS has no update/delete policy. Only the database owner can change rows.
+- **Insert policies stop forgery**: a borrower can only log decisions about
+  themselves; a lender can only log a request it really sent, or a view of a
+  borrower it holds an unexpired grant for, under its own id.
+- **Readable by**: the borrower (everything about them, `GET /v1/access-log`,
+  and `accessLog` in `/v1/data-export`) and the lender (its own rows only).
+- Survives a soft account reset on purpose (it's a record of what lenders
+  did); goes when the auth user is deleted (cascade).
+- `revoke` now deletes the grant *and* logs `access_revoked`, since the grant
+  row itself leaves no trace.
+- Verified against the real database: `scripts/check_access_log_rls.py`
+  tries 9 allowed/forbidden writes in rolled-back transactions. Every line
+  should say OK.
+
+## Cleaning out pre-2026-09-23 fake data
+
+`scripts/cleanup_fake_seed_data.py` is a dry run by default and lists the
+seeded fake rows (no-lender grants and requests, default metrics, "Week N"
+cash flow, simulate notifications) plus throwaway test accounts. `--apply`
+backs them up to a JSON file, then deletes. Run it by hand; it touches
+production data.
+
 ## Status: real, working, real infra
 
 Everything here actually does what it says — real PDF parsing, real scoring,

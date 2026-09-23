@@ -44,7 +44,7 @@ Status key: **done** (built and checked against the running system), **partial**
 | P1 | Validate weights against real loan outcomes with a lender partner | open |
 | P2 | Parser tested on many more real statements, including aggregator-routed loans | open |
 | P3 | Automated test suite | partial: backend pytest (parser, scoring, requirement rules, auth, reset) and mobile unit/widget tests, both in CI; no database-level integration tests in CI yet |
-| P4 | Data Protection Act: register with the ODPC, DPIA, consent/access audit log | open (no audit log table yet) |
+| P4 | Data Protection Act: register with the ODPC, DPIA, consent/access audit log | partial: append-only `access_log` (requests, approvals, denials, revocations, every lender view of a score), readable by the borrower via `GET /v1/access-log` and in the data export; ODPC registration and DPIA still open |
 | P5 | Work out where a scoring service sits under the CRB regulations | open |
 | P6 | PIN / device lock stored securely, not in plain browser storage | done in mobile (salted hash in the OS keystore, lockout, optional biometrics); web app still plain, being retired |
 

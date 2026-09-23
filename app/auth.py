@@ -140,7 +140,7 @@ async def get_current_user(
     # sends "Authorization: Bearer <access token>" (kept in the OS keystore,
     # see /v1/auth/token below). No silent refresh on this path: an expired
     # token 401s with code token_expired and the app calls
-    # /v1/auth/token/refresh itself. Borrower-only — lenders use the web portal.
+    # /v1/auth/token/refresh itself. Borrower-only â€” lenders use the web portal.
     auth_header = request.headers.get("authorization", "")
     if allow_bearer and auth_header.lower().startswith("bearer "):
         try:
