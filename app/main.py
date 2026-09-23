@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .db import close_pool, open_pool
 from .rate_limit import limiter
-from .routers import account, auth, cash_flow, consent, lender, lender_auth, notifications, profile, requests, savings_goal, score, statements
+from .routers import account, auth, cash_flow, consent, lender, lender_auth, notifications, profile, push_tokens, requests, savings_goal, score, statements
 
 # Comma-separated in production (e.g. the deployed Netlify URLs) — defaults
 # to both apps' local dev servers so nothing changes for local dev. The
@@ -75,6 +75,7 @@ app.include_router(cash_flow.router)
 app.include_router(savings_goal.router)
 app.include_router(account.router)
 app.include_router(notifications.router)
+app.include_router(push_tokens.router)
 app.include_router(lender_auth.router)
 app.include_router(lender.router)
 

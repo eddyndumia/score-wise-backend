@@ -9,3 +9,7 @@ __pycache__/
 # .agents/skills/ is the real source; this regenerates via `npx skills`.
 .claude/skills/
 cleanup_backup_*.json
+
+# Firebase service account keys (private keys, never commit)
+*firebase-adminsdk*.json
+firebase-service-account*.json

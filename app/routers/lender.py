@@ -1,10 +1,11 @@
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from psycopg.errors import InsufficientPrivilege, NoDataFound
 from pydantic import BaseModel
 
 from ..access_log import log_event
+from ..push import notify_lender_request
 from ..consent_categories import filter_signals
 from ..db import db_conn
 from ..lender_auth import AuthedLender, get_current_lender
@@ -95,7 +96,12 @@ class ConsentRequestBody(BaseModel):
 
 @router.post("/v1/lender/consent-requests")
 @limiter.limit("20/minute")
-async def create_consent_request(request: Request, body: ConsentRequestBody, lender: AuthedLender = Depends(get_current_lender)):
+async def create_consent_request(
+    request: Request,
+    body: ConsentRequestBody,
+    background: BackgroundTasks,
+    lender: AuthedLender = Depends(get_current_lender),
+):
     async with db_conn(lender.id) as conn:
         try:
             row = await (await conn.execute(
@@ -117,6 +123,9 @@ async def create_consent_request(request: Request, body: ConsentRequestBody, len
         )).fetchone()
         await log_event(conn, borrower_id=str(pending["user_id"]), lender_id=lender.id, lender_name=lender.org_name,
                         event="request_sent", detail={"requestId": str(row["id"]), "days": body.grantDurationDays})
+    # After the transaction commits, so the borrower never gets a push for a
+    # request that rolled back. Runs after the response is sent.
+    background.add_task(notify_lender_request, str(pending["user_id"]), lender.org_name, str(row["id"]))
     return {"ok": True, "requestId": str(row["id"])}
 
 
