@@ -1,0 +1,27 @@
+
+1. PARSE   customer name on statement: JANE DEMO WANJIKU
+           402 transactions parsed, 2026-03-01 to 2026-08-30
+           2026-03-01  Completed   -6,000.00  M-Shwari Deposit
+           2026-03-02  Completed   -1,450.00  Buy Goods from 5123401 - MAMA NJERI GROCERS
+           2026-03-02  Completed   -1,850.00  Buy Goods from 5123403 - TUSKER FRESH MART
+           2026-03-03  Completed     -250.00  Buy Goods from 5123404 - SIMBA FUEL STATION
+           2026-03-03  Completed   -1,200.00  Buy Goods from 5123406 - JIKONI BUTCHERY
+           2026-03-04  Completed   -2,650.00  Customer Transfer to 2547******22 - MARY DEMO ACHIENG
+
+2. CLASSIFY  tags: {'savings': 22, 'ignore': 342, 'repayment': 7, 'ambiguous': 6, 'internal': 10, 'fuliza': 15}
+           ambiguous -> asks user: DEMO BANK Money Transfer (6x, KES 24,000)
+
+3. FEATURES (current half of statement)
+           repayments on-time/late/missed: 6/0/0
+           Fuliza-active days: 7 of 99
+           saved KES 26,500 of income KES 287,300
+
+4. SCORE   738  (range 300-850, previous half 737, delta +1)
+           Repayment history  100  strong    Consistent, on-time payments over the last 6 months.
+           Fuliza reliance      7  strong    Rarely relies on overdraft facilities.
+           Savings activity    37  moderate  Below-average savings relative to income.
+
+5. EXPLORATORY (not in the score yet)
+           large inflows: 6, avg gap 30.8 days, spread 0.7 days
+           distinct Buy Goods merchants: 8
+
